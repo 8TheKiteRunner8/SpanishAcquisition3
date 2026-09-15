@@ -1,12 +1,12 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: SpanishAcquisition
 Version: 3.0
 Summary: Package for interfacing with devices and building user interfaces.
 Home-page: https://github.com/mainCSG/SpanishAcquisition3
 Author: Dmitri Iouchtchenko
 Author-email: diouchtc@uwaterloo.ca
-Maintainer: Stephen Harrigan
-Maintainer-email: srharrig@uwaterloo.ca
+Maintainer: Zach Merino
+Maintainer-email: zmerinog@uwaterloo.ca
 License: BSD
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Science/Research
@@ -14,3 +14,12 @@ Classifier: License :: OSI Approved :: BSD License
 Classifier: Operating System :: OS Independent
 Classifier: Programming Language :: Python :: 3
 License-File: LICENSE
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: license
+Dynamic: license-file
+Dynamic: maintainer
+Dynamic: maintainer-email
+Dynamic: summary

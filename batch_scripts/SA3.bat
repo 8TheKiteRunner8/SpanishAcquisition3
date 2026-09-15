@@ -6,9 +6,9 @@ rem - conda to be in the PATH
 rem - cmd.exe to be initialized with conda init
 
 rem Define here the path to your conda installation
-set CONDAPATH=C:\Users\CSG\Miniconda3
+set CONDAPATH=C:\Users\kite\Miniconda3
 rem Define here the name of the environment
-set ENVNAME=spac3
+set ENVNAME=SpAcqEnv
 
 rem The following command activates the base environment.
 rem call C:\Users\CSG\Miniconda3\Scripts\activate.bat C:\Users\CSG\Miniconda3
@@ -19,7 +19,7 @@ rem Using call is required here, see: https://stackoverflow.com/questions/246781
 call %CONDAPATH%\Scripts\activate.bat %ENVPATH%
 
 rem Run a python script in that environment
-python "C:\Users\CSG\Documents\GitHub\SpanishAcquisition3\examples\acquisition.py"
+python "C:\Users\kite\Dev\Python\SpanishAcquisition3\examples\acquisition.py"
 
 rem Deactivate the environment
 call conda deactivate

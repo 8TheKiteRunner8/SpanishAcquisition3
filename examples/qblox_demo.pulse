@@ -1,0 +1,19 @@
+# Minimal pulse program that should parse cleanly.
+delay settle = 20 ns
+
+pulse p1
+pulse p2
+
+output ch1, ch2
+
+p1 = {shape: 'square', length: 40 ns}
+p2 = {shape: 'square', length: 60 ns}
+
+p1.amplitude = 0.5 V
+p2.amplitude = -0.5 V
+
+p1:ch1
+p2:ch2
+
+settle
+acquire

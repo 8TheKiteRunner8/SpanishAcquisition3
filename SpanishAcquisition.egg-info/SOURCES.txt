@@ -111,6 +111,16 @@ spacq/devices/oxford/mock/tests/test_mock_ips120_10.py
 spacq/devices/oxford/tests/__init__.py
 spacq/devices/oxford/tests/server/__init__.py
 spacq/devices/oxford/tests/server/test_ips120_10.py
+spacq/devices/qblox/__init__.py
+spacq/devices/qblox/qblox_cluster.py
+spacq/devices/qblox/spi_rack.py
+spacq/devices/qblox/mock/__init__.py
+spacq/devices/qblox/mock/mock_spi_rack.py
+spacq/devices/qblox/mock/tests/__init__.py
+spacq/devices/qblox/mock/tests/test_mock_spi_rack.py
+spacq/devices/qblox/tests/__init__.py
+spacq/devices/qblox/tests/server/__init__.py
+spacq/devices/qblox/tests/server/test_spi_rack.py
 spacq/devices/rohde_schwarz/__init__.py
 spacq/devices/rohde_schwarz/smf100a.py
 spacq/devices/rohde_schwarz/mock/__init__.py

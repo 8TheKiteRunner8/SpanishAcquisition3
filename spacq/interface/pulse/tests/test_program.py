@@ -24,6 +24,14 @@ class ProgramTest(TestCase):
 		(('settle',), Quantity(20, 'ns')),
 	]
 
+	def testSamplePulseFileLoads(self):
+		"""
+		The bundled sample pulse program should parse without crashing on delay references.
+		"""
+
+		p = program.Program.from_file(path.join(resource_dir, '01.pulse'))
+		eq_(set(p.variables), set(['bumps', 'bump_spacing', 'settle', 'end_delay', 'first_square', 'wobble', 'last_square', 'manipulator', 'f1', 'f2', '_acq_marker']))
+
 	def testFromFile(self):
 		"""
 		Grab a file and load the program in it.

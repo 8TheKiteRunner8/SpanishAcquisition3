@@ -17,7 +17,14 @@ class PulseError(Exception):
 	A problem with the pulse program.
 	"""
 
-	pass
+	def __getitem__(self, index):
+		if len(self.args) != 1:
+			raise IndexError(index)
+
+		value = self.args[0]
+		if isinstance(value, (list, tuple)):
+			return value[index]
+		return value
 
 class PulseSyntaxError(PulseError):
 	"""

@@ -242,6 +242,14 @@ class ParameterPanel(ScrolledPanel):
 		# Panel.
 		self.parameter_sizer = wx.GridBagSizer(hgap=5)
 
+		# Reserve the full column layout before adding real content. wxGridBagSizer
+		# tracks the number of columns from the highest occupied column, and the
+		# growable-column call fails if that count is not established first.
+		# Place these dummy cells in a non-visible row so they do not collide with the
+		# actual heading/input rows.
+		for col in range(self.num_cols):
+			self.parameter_sizer.Add((0, 0), (10000, col))
+
 		self.parameter_sizer.AddGrowableCol(self.input_col, 1)
 		if self.use_resource_labels:
 			self.parameter_sizer.AddGrowableCol(self.input_col + 1, 1)
@@ -738,7 +746,8 @@ class PulseProgramFrame(wx.Frame):
 			try:
 				prog = Program.from_file(path)
 			except PulseSyntaxError as e:
-				MessageDialog(self, '\n'.join(e[0]), 'Compilation error', monospace=True).Show()
+				message = e[0] if isinstance(e[0], str) else '\n'.join(e[0])
+				MessageDialog(self, message, 'Compilation error', monospace=True).Show()
 
 				return
 

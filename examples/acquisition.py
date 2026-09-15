@@ -6,6 +6,7 @@ from spacq.gui.display.plot.live.scalar import ScalarMeasurementFrame
 from spacq.gui.display.plot.live.list import ListMeasurementFrame
 from spacq.gui.config.variables import VariablesPanel
 from spacq.gui.config.pulse import PulseProgramFrame
+from spacq.gui.config.videomode import VideoModeFrame
 from spacq.gui.config.devices import DeviceConfigFrame
 from spacq.gui.action.smooth_reset import SmoothResetPanel
 from spacq.gui.action.data_capture import DataCapturePanel
@@ -65,6 +66,7 @@ class AcquisitionApp(wx.App):
             None, self.global_store, title='Acquisition (v{0})'.format(VERSION))
         self.device_config_frame = None
         self.pulse_program_frame = None
+        self.video_mode_frame = None
 
         # Menu.
         menuBar = wx.MenuBar()
@@ -90,6 +92,10 @@ class AcquisitionApp(wx.App):
         # Pulse program.
         item = menu.Append(wx.ID_ANY, '&Pulse program...')
         self.Bind(wx.EVT_MENU, self.OnMenuConfigurationPulseProgram, item)
+
+        # Video mode program.
+        item = menu.Append(wx.ID_ANY, '&Video mode program...')
+        self.Bind(wx.EVT_MENU, self.OnMenuConfigurationVideoModeProgram, item)
 
         # Help.
         menu = wx.Menu()
@@ -140,6 +146,16 @@ class AcquisitionApp(wx.App):
             self.pulse_program_frame.Show()
 
         self.pulse_program_frame.Raise()
+
+    def OnMenuConfigurationVideoModeProgram(self, evt=None):
+        def close_callback():
+            self.video_mode_frame = None
+        
+        if self.video_mode_frame is None:
+            self.video_mode_frame = VideoModeFrame(
+                self.acq_frame, self.global_store, close_callback)
+            self.video_mode_frame.Fit()
+            self.video_mode_frame.Show()
 
     def OnMenuHelpAbout(self, evt=None):
         info = AboutDialogInfo()

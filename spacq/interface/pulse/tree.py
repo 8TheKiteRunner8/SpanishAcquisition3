@@ -3,6 +3,8 @@ log = logging.getLogger(__name__)
 
 from os import path
 
+from pyparsing import ParseResults
+
 from spacq.tool.box import Enum
 
 from ..units import IncompatibleDimensions, Quantity
@@ -218,6 +220,25 @@ class ASTNode(object):
 	names = []
 	is_list = False
 
+	@staticmethod
+	def _normalize_token(value):
+		"""
+		Modern pyparsing returns ParseResults for named values even when there is only
+		a single result. The legacy AST expects plain Python values in most places, but
+		declaration variable lists must remain list-like. We unwrap only scalar-style
+		ParseResults and keep collection-like values as lists.
+		"""
+		if isinstance(value, ParseResults):
+			if len(value) == 0:
+				return []
+			if len(value) == 1:
+				first = value[0]
+				if isinstance(first, (list, tuple, ParseResults)):
+					return [ASTNode._normalize_token(item) for item in first]
+				return ASTNode._normalize_token(first)
+			return [ASTNode._normalize_token(item) for item in value]
+		return value
+
 	def __init__(self, *args):
 		log.debug('Creating node of type "{0}".'.format(self.__class__.__name__))
 
@@ -238,10 +259,13 @@ class ASTNode(object):
 		log.debug('Received tokens: {0!r}'.format(tok))
 
 		if self.is_list:
-			self.items = list(tok)
+			self.items = [self._normalize_token(item) for item in list(tok)]
 		else:
 			for name in self.names:
-				setattr(self, name, tok[name])
+				value = self._normalize_token(tok[name])
+				if name == 'variables' and not isinstance(value, (list, tuple)):
+					value = [value]
+				setattr(self, name, value)
 
 	def __eq__(self, other):
 		return repr(self) == repr(other)
@@ -532,8 +556,15 @@ class PulseSequence(ASTNode):
 		if env.stage == env.stages.commands:
 			for item in self.items:
 				if isinstance(item, Delay):
-					if not item.length.assert_dimensions('s', exception=False):
-						env.add_error('Delay must be a time value', self.location)
+					if isinstance(item.length, str):
+						try:
+							if env.variables[item.length] != 'delay':
+								env.add_error('Not a delay', self.location)
+						except KeyError:
+							env.add_error('Undeclared variable "{0}"'.format(item.length), self.location)
+					else:
+						if not item.length.assert_dimensions('s', exception=False):
+							env.add_error('Delay must be a time value', self.location)
 
 					continue
 
@@ -585,8 +616,11 @@ class PulseSequence(ASTNode):
 								else:
 									target.pulse(data, amplitude, length)
 				else:
+					length = item.length
+					if isinstance(length, str):
+						length = env.values[(length,)]
 					target.set_next(0.0)
-					target.delay(item.length)
+					target.delay(length)
 
 
 class Variable(ASTNode):

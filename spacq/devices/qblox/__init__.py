@@ -18,9 +18,12 @@ log = logging.getLogger(__name__)
 name = 'Qblox'
 
 from . import spi_rack
-models = [spi_rack]
+from . import qblox_cluster
+
+models = [spi_rack, qblox_cluster]
 log.debug('Found models for "{0}": {1}'.format(name, ''.join(str(x) for x in models)))
 
 from .mock import mock_spi_rack
-mock_models = [mock_spi_rack]
+from .mock import mock_qblox_cluster
+mock_models = [mock_spi_rack, mock_qblox_cluster]
 log.debug('Found mock models for "{0}": {1}'.format(name, ''.join(str(x) for x in mock_models)))
