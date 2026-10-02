@@ -1,0 +1,157 @@
+spirack:
+ connected: 1
+ port: "COM3"
+ modules:
+  module1:
+   address: 8 
+   dacs:
+    dac3:
+      enabled: 1
+      name: "dac3"
+      span: "range_2V_bi"
+      ramp_rate: 2
+      ramp_max_step: 0.001
+      ramping_enabled: True
+    dac7:
+     enabled: 1
+     name: "coarse_gate"
+     span: "range_2V_bi"
+     ramp_rate: 2
+     ramp_max_step: 0.001
+     ramping_enabled: True
+  module2:
+   address: 7
+   dacs:
+    dac9:
+     enabled: 1
+     name: "dac_test"
+     span: "range_4V_uni"
+     ramp_rate: 2
+     ramp_max_step: 0.001
+     ramping_enabled: False
+
+cluster:
+ connected: 1                     
+ cluster_ip: "169.254.12.10"
+ qrm:
+  chassis_slot: 4 
+  I1: 
+   name: "I1"
+   IQ: "I"
+  I2:
+   name: "I2"
+   IQ: "I"
+  O1:
+   name: "O1"
+  O2:
+   name: "O2"
+   
+ qcm:
+  chassis_slot: 2
+  O1:
+   name: "O1"
+  O2:
+   name: "O2"
+  O3:
+   name: "O3"
+  O4:
+   name: "O4"
+    
+ qcm_rf:
+  chassis_slot: 6
+  O1:
+   name: "O1"
+  O2:
+   name: "O2"
+
+MFLI:
+ connected: 0
+ session: "192.168.60.246"
+ device_id: "DEV3901"
+ zh_mfli_voltage: 
+  input: # uses demod[0]
+   connected: 1
+   range: 5.0
+   scaling: 1.4
+   ac: 0 
+   imp50: 0
+   diff: 0 
+   float: 0
+   order: 4
+   timeconstant: 0.00692291
+   sinc: 0
+   pc_transfer_enable: 1
+   pc_transfer_rate: 100
+  output:
+   connected: 1
+   osc_frequency: 70000 # uses osc[0]
+   amplitude: 1.0
+   imp50: 0
+   range: 5.0
+   offset: 0.0
+   add: 0
+   diff: 0
+  aux:
+   connected: 1
+   aux_channel: 4
+   preoffset: 0.0
+   scale: 1.0
+   offset: 0.0
+   limitlower: -5
+   limitupper: 5
+   tipprotect_enable: 0
+   tipprotect_polarity: 1
+   tipprotect_source: 4
+   tipprotect_value: 5.0
+ zh_mfli_current: 
+  connected: 0
+  input: # always use demod[0]
+   connected: 0
+   range: 10e-6
+   scaling: 1.0
+   float: 0
+   order: 4
+   timeconstant: 0.00692291
+   sinc: 0
+   pc_transfer_enable: 1
+   pc_transfer_rate: 857100
+ #trigger: # set to 0 for continuous mode, hard code this for now
+  output: # always use osc[0]
+   connected: 0
+   osc_frequency: 70000
+   harmonic: 1
+   phaseshift: 0.00
+   amplitude: 1.0
+   imp50: 0
+   range: 5.0
+   offset: 0.0
+   add: 0
+   diff: 0
+  aux:
+   connected: 0
+   aux_channel: 4
+   preoffset: 0.0
+   scale: 1.0
+   offset: 0.0
+   limitlower: -5
+   limitupper: 5
+   tipprotect_enable: 0
+   tipprotect_polarity: 1
+   tipprotect_source: 4
+   tipprotect_value: 5.0
+ zh_mfli_daq:
+  save_filename: "test"
+  triggernode: '/dev3901/demods/0/sample.R'
+  type: 0
+  clearhistory: 1
+  bandwidth: 0.00000000
+  historylength: 1000000000000000
+  fileformat: 4 
+  endless: 1
+  subscribe: '/dev3901/demods/0/sample.R.avg'
+
+preamp:
+  connected: 0
+  sensitivity: 10e-6
+  supression: 10e-5
+  rise_time: "MIN"

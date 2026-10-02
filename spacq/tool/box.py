@@ -24,6 +24,7 @@ def sift(items, cls):
 
 	return [item for item in items if isinstance(item, cls)]
 
+
 def get_mask(x,y, tx, ty):
 	dx = (tx[-1] - tx[0])/(tx.size -1)
 	dy = (ty[-1] - ty[0])/(ty.size -1)
@@ -46,7 +47,6 @@ def get_mask(x,y, tx, ty):
 	mask = where(mask, mask, nan)
 
 	return mask.T
-	
 
 
 def triples_to_mesh(x, y, z, max_mesh=[-1,-1], has_mask=False):
@@ -82,6 +82,7 @@ def triples_to_mesh(x, y, z, max_mesh=[-1,-1], has_mask=False):
 
 	return (target_z, (x_values[0], x_values[-1]), (y_values[0], y_values[-1]),
 			(min(z), max(z)))
+
 
 def triples_to_mesh_y(x, y, z, max_mesh=[-1,-1]):
 	"""

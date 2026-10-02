@@ -168,10 +168,8 @@ class Condition(object):
 
 	def __str__(self):
 		return '{0} {1} {2}'.format(self.arg1,self.op_symbol,self.arg2)
-		
-		
-
-
+			
+			
 class InputVariable(Variable):
 	"""
 	An input (measurement) variable.
