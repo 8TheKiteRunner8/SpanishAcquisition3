@@ -10,8 +10,10 @@ fileslist.list
 /venv
 
 # Visual Studio Code settings
-.vscode/
+.vscode/*
+.vscode/settings.json
 
 # Local build and distribution
 /build
 /dist
+

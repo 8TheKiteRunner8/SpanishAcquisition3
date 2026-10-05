@@ -8,5 +8,6 @@
             "packageManager": "ms-python.python:conda"
         }
     ],
-    "python.analysis.typeCheckingMode": "off"
+    "python.analysis.typeCheckingMode": "off",
+    "editor.guides.indentation": true
 }
