@@ -23,6 +23,7 @@ class QbloxVideoBackend:
     def prepare_and_run_qblox(self, config: dict) -> dict:
         """
         This method prepares the qblox modules and sequencers for a video-mode acquisition of a continuous 2D sweep. 
+        The method is build around the assumption that each axis is controlled by one output, i.e. non-virtualized gates.
         The configuration dictionary should include the following keys:
         - x_channel: QbloxChannelResource for the X axis control.
         - y_channel: QbloxChannelResource for the Y axis control.
@@ -38,6 +39,10 @@ class QbloxVideoBackend:
         Returns:
             dict: Dictionary containing prepared modules, sequencers, and the uploaded sequence.
         """
+        cluster = self.device.cluster
+        cluster.reset()
+        time.sleep(0.1)  # Give the cluster some time to reset
+
         self.config = config
 
         # Channels are resources resolved from user-configured labels
@@ -50,50 +55,65 @@ class QbloxVideoBackend:
                 "resolved from the configured resource labels."
             )
 
-        x_module = x_channel.module
+        # this will yield the qblox module class (QbloxClusterModule) we actually want to have direct control over the modules
+        x_module = x_channel.module     
         y_module = y_channel.module
         acq_module = acq_channel.module
-
+        
         modules = {id(module): module for module in (x_module, y_module, acq_module)}
 
         if not acq_module.is_qrm_type:
             raise ValueError("QRM module expected for acquisition.")
 
-        sequencers_index = {
-            "x": 0,
-            "y": 0,
-            "acq": 1,
-        }
-        # The Q1ASM sequence assigns X to path 0 and Y to path 1.
-        x_path, y_path = 0, 1
-
         # Every sequencer runs the same wait_sync'd program, so build it once.
         sequence_options = config.get("sequence_options", {})
         sequence = self._create_sequence(x_module, y_module, **sequence_options)
 
+        sequencers = {
+            'x': x_module.sequencer0,
+            'y': y_module.sequencer0,
+            'acq': acq_module.sequencer1,
+        }
+
+        seq_targets = [(x_module.slot_idx, 0), (y_module.slot_idx, 0), (acq_module.slot_idx, 1)]
+
         # disconnect existing I/O and configure the sequencer connections.
         for module in modules.values():
             sh.disconnect_io(module)
+            
         # measure and apply I/Q offsets before the frame ac quisition.
         sh.acquire_scope_and_calc_offsets(acq_module)
         sh.disconnect_io(acq_module)
 
-        # connect the sequencers to the appropriate channels
-        # TODO: test the I/O connections, test x_module being different and the same as the y_module.
-        sh.connect_output(x_module, sequencer=sequencers_index["x"], output_index = x_channel.output_index, path=x_path)
-        sh.connect_output(y_module, sequencer=sequencers_index["y"], output_index = y_channel.output_index, path=y_path)
-        sh.connect_input(acq_module, sequencer=sequencers_index["acq"], input_index = acq_channel.input_index, path = 0)
+        # connect channels to the sequencers of the corrsponding modules
+        # connect x and y to separate paths to match sequence conventions
+        x_channel.connect_output(sequencers['x'], path="I") 
+        y_channel.connect_output(sequencers['y'], path="O") 
+        acq_channel.connect_input(sequencers['acq'], path="I") 
 
-        # upload the sequence to the relevant sequencers
-        for module in (x_module, y_module):
-            sh.upload_sequence(module, sequencer=sequencers_index["x"], sequence=sequence)
-        # TODO: arm/start the relevant sequencers and wait for completion.
-        # TODO: retrieve acquisition bins and reshape them into the frame.
+        # enable sync for the sequencers
+        sequencers['x'].enable_sync(True)
+        sequencers['y'].enable_sync(True)
+        sequencers['acq'].enable_sync(True)
 
+        # upload the sequence 
+        # using a set to avoid uploading the same sequence to the same sequencer multiple times
+        for sequencer in set(sequencers.values()):
+            sequencer.sequence(sequence)
+
+        # arm and start the sequencers
+        cluster.arm_sequencers(seq_targets = seq_targets)
+        cluster.start_sequencers(seq_targets = seq_targets)
+        
         return {
             "modules": modules,
             "sequence": sequence,
+            "seq_targets": seq_targets,
         }
+    
+    def stop(self, cluster, seq_targets):
+        cluster.stop_sequencers(seq_targets=seq_targets)
+        cluster.get_sequencer_status(seq_targets=seq_targets)
 
     def _create_sequence(
         self,
@@ -240,12 +260,20 @@ class QbloxVideoBackend:
         acquisition_name: str = "frame",
         channel: str = "path0",
     ) -> dict:
-        """Reshape one Qblox acquisition's integration bins into a video frame.
+        """
+        Description:
+        Reshape one Qblox acquisition's integration bins into a video frame.
 
-        ``voltage_window`` is the sweep configuration containing
-        ``x_window_mV``, ``y_window_mV``, ``x_num_steps``, and ``y_num_steps``.
-        ``channel`` selects ``path0``, ``path1``, or ``magnitude`` (the I/Q
-        magnitude when both paths are present).
+        Parameters:
+        ----------
+        voltage_window : dict
+            The sweep configuration containing x_window_mV, y_window_mV, x_num_steps, and y_num_steps.
+        acquisition_data : dict
+            The raw acquisition data from the Qblox module.
+        acquisition_name : str, optional
+            The name of the acquisition to process (default is "frame").
+        channel : str, optional
+            The channel to extract ("path0", "path1", or "magnitude"; default is "path0").
         """
         try:
             x_window_mV = voltage_window["x_window_mV"]
@@ -316,12 +344,27 @@ class QbloxVideoBackend:
         channel: str = "path0",
         poll_interval_s: Optional[float] = None,
     ):
-        """Continuously poll and yield frames while the Q1ASM program loops forever.
+        """
+        Continuously poll and yield frames while the Q1ASM program loops forever.
 
-        Call after the sequencers from ``run_result`` (as returned by
-        ``prepare_and_run``) have been armed and started. The sequencer keeps
-        overwriting the same bins every sweep, so this polls well within one
-        frame period to avoid missing a completed sweep.
+        Parameters:
+        ----------
+        run_result : dict
+            The result dictionary returned by ``prepare_and_run`` containing sequencer information.
+        voltage_window : dict
+            The sweep configuration containing x_window_mV, y_window_mV, x_num_steps, and y_num_steps.
+        acquisition_name : str, optional
+            The name of the acquisition to process (default is "frame").
+        channel : str, optional
+            The channel to extract ("path0", "path1", or "magnitude"; default is "path0").
+        poll_interval_s : float, optional
+            The interval in seconds between polling the sequencer for new frames. If None, it is calculated based on the frame time.
+
+        Yields:
+        ------
+        dict
+            A dictionary containing the reshaped frame values, x and y axes in mV, and the channel name.
+
         """
         acq_sequencer = run_result["sequencers"]["acq"]
 
@@ -338,6 +381,7 @@ class QbloxVideoBackend:
             yield self._construct_frame(voltage_window, acquisition_data, acquisition_name, channel)
             time.sleep(poll_interval_s)
 
+#%% --- TESTS --- ###
 DUMMY_CLUSTER_CONFIG = {
     2: ClusterType.CLUSTER_QCM,
     4: ClusterType.CLUSTER_QRM,
@@ -357,7 +401,6 @@ HARDWARE_TEST_CONFIG = {
 }
 
 USE_HARDWARE_FOR_DEMO = False
-
 
 def _print_test_program(cluster: Cluster, config: dict) -> dict:
     module = next(
@@ -379,7 +422,6 @@ def _print_test_program(cluster: Cluster, config: dict) -> dict:
     sequencer.sequence(sequence)
     print(sequence["program"])
     return sequence
-
 
 if __name__ == "__main__":
     if USE_HARDWARE_FOR_DEMO:

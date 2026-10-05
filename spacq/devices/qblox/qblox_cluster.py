@@ -51,8 +51,40 @@ class QbloxChannelResource(Resource):
             int(channel_name[1:]) if channel_name.startswith("I") else None
         )
 
+    def __getattr__(self, name):
+        module = self.__dict__.get("module")
+        if module is None:
+            raise AttributeError(name)
+        return getattr(module, name)    
+
     def __repr__(self):
         return f"<QbloxChannelResource {self.channel_name} of {self.module.name}>"
+
+    def connect_output(self, sequencer, path: str = "I"):
+        """
+        Connect this channel as an output to the specified path on the sequencer.
+
+        Parameters:
+        ----------
+        sequencer : object
+            The sequencer object to which the output should be connected.
+        path : str, optional
+            The input path on the sequencer to connect to (default is "I").
+        """
+        getattr(sequencer, f"connect_out{self.output_index-1}")(path)
+
+    def connect_input(self, sequencer, path: str = "I"):
+        """
+        Connect this channel as an input to the specified path on the sequencer.
+
+        Parameters:
+        ----------
+        sequencer : object
+            The sequencer object to which the input should be connected.
+        path : str, optional
+            The output path on the sequencer to connect to (default is "I").
+        """
+        getattr(sequencer, f"connect_in{self.input_index-1}")(path)
 
 
 class QbloxModule(AbstractSubdevice):
@@ -68,7 +100,7 @@ class QbloxModule(AbstractSubdevice):
         qblox_module: The underlying qblox_instruments module object.
         module_type: One of the keys in MODULE_CHANNELS (eg. "QCM", "QRM").
         """
-        self.qblox_module = qblox_module
+        self.module = qblox_module
         self.module_type = module_type
         self.slot_idx = qblox_module.slot_idx
         self.channels = {}
@@ -86,6 +118,10 @@ class QbloxModule(AbstractSubdevice):
             self.resources[channel_name] = channel
 
     def _create_channels(self):
+        """
+        Create channels, based on MODULE_CHANNELS for the module type. 
+        This is not automatically configured.
+        """
         channel_info = MODULE_CHANNELS.get(self.module_type)
 
         if channel_info is None:
@@ -97,7 +133,7 @@ class QbloxModule(AbstractSubdevice):
             self.channels[channel_name] = QbloxChannelResource(self, channel_name)
 
     def __getattr__(self, name):
-        return getattr(self.qblox_module, name)
+        return getattr(self.module, name)
 
 
 class QbloxCluster(AbstractDevice):

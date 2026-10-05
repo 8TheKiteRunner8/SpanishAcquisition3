@@ -9,6 +9,9 @@ fileslist.list
 # Virtual Environment
 /venv
 
+# Visual Studio Code settings
+.vscode/
+
 # Local build and distribution
 /build
 /dist
