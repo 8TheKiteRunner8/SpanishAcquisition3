@@ -20,7 +20,56 @@ class QbloxVideoBackend:
         """
         self.device = device
 
-    def prepare_and_run_qblox(self, config: dict) -> dict:
+    def prepare_and_run(self, config: dict) -> dict:
+        """
+        Prepare and start a video-mode sweep in the mode given by config["mode"].
+
+        "direct" (default) acquires whatever signal arrives at acq_channel.
+        "set_readout" also plays a probe tone from the QRM and demodulates what comes back.
+        """
+        mode = config.get("mode", "direct")
+        if mode == "direct":
+            return self.prepare_and_run_direct(config)
+        if mode == "set_readout":
+            return self.prepare_and_run_set_readout(config)
+        raise ValueError(f"Unknown mode {mode!r}; expected 'direct' or 'set_readout'.")
+
+    def prepare_and_run_direct(self, config: dict) -> dict:
+        """Sweep X and Y and acquire the signal at acq_channel as it arrives."""
+        return self._prepare_and_run(config)
+
+    def prepare_and_run_set_readout(self, config: dict) -> dict:
+        """
+        Sweep X and Y while the acquisition QRM plays a probe tone and demodulates the return.
+
+        Besides the usual channels this needs:
+        - readout_channel: the acquisition module's output that carries the tone.
+        - readout_options: {"frequency_Hz": tone/demodulation frequency, "amplitude_mV": tone peak amplitude}.
+        """
+        readout_channel = config.get("readout_channel")
+        readout_options = config.get("readout_options")
+        if readout_channel is None or not readout_options:
+            raise ValueError("set_readout mode needs readout_channel and readout_options.")
+
+        try:
+            frequency_Hz = float(readout_options["frequency_Hz"])
+            amplitude_mV = float(readout_options["amplitude_mV"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "readout_options needs numeric frequency_Hz and amplitude_mV."
+            ) from error
+        if not abs(frequency_Hz) <= 500e6:
+            raise ValueError("readout frequency_Hz must be within +/-500 MHz.")
+
+        return self._prepare_and_run(config, readout_channel, frequency_Hz, amplitude_mV)
+
+    def _prepare_and_run(
+        self,
+        config: dict,
+        readout_channel=None,
+        readout_frequency_Hz=None,
+        readout_amplitude_mV=None,
+    ) -> dict:
         """
         This method prepares the qblox modules and sequencers for a video-mode acquisition of a continuous 2D sweep. 
         The method is build around the assumption that each axis is controlled by one output, i.e. non-virtualized gates.
@@ -39,10 +88,6 @@ class QbloxVideoBackend:
         Returns:
             dict: Dictionary containing prepared modules, sequencers, and the uploaded sequence.
         """
-        cluster = self.device.cluster
-        cluster.reset()
-        time.sleep(0.1)  # Give the cluster some time to reset
-
         self.config = config
 
         # Channels are resources resolved from user-configured labels
@@ -65,9 +110,17 @@ class QbloxVideoBackend:
         if not acq_module.is_qrm_type:
             raise ValueError("QRM module expected for acquisition.")
 
-        # Every sequencer runs the same wait_sync'd program, so build it once.
+        readout_amplitude = None
+        if readout_channel is not None:
+            if readout_channel.module is not acq_module or readout_channel.output_index is None:
+                raise ValueError("readout_channel must be an output of the acquisition module.")
+            readout_amplitude = readout_amplitude_mV / self._max_voltage_mV(acq_module)
+            if not 0 < readout_amplitude <= 1:
+                raise ValueError("readout amplitude_mV must be above 0 and within the module's output range.")
+
+        # The sweep and acquisition programs differ but must have identical per-pixel timing.
         sequence_options = config.get("sequence_options", {})
-        sequence = self._create_sequence(x_module, y_module, **sequence_options)
+        sequences = self._create_sequences(x_module, y_module, **sequence_options)
 
         sequencers = {
             'x': x_module.sequencer0,
@@ -75,47 +128,79 @@ class QbloxVideoBackend:
             'acq': acq_module.sequencer1,
         }
 
-        seq_targets = [(x_module.slot_idx, 0), (y_module.slot_idx, 0), (acq_module.slot_idx, 1)]
+        # x and y may share a sequencer, which must only be armed and started once.
+        seq_targets = list(dict.fromkeys([(x_module, 0), (y_module, 0), (acq_module, 1)]))
 
-        # disconnect existing I/O and configure the sequencer connections.
-        for module in modules.values():
-            sh.disconnect_io(module)
+        # Other signals may be running on these modules, so only touch our own sequencers.
+        for module, seq_ind in seq_targets:
+            self._release_sequencer(module, seq_ind)
             
-        # measure and apply I/Q offsets before the frame ac quisition.
-        sh.acquire_scope_and_calc_offsets(acq_module)
-        sh.disconnect_io(acq_module)
-
         # connect channels to the sequencers of the corrsponding modules
         # connect x and y to separate paths to match sequence conventions
         x_channel.connect_output(sequencers['x'], path="I") 
-        y_channel.connect_output(sequencers['y'], path="O") 
-        acq_channel.connect_input(sequencers['acq'], path="I") 
+        y_channel.connect_output(sequencers['y'], path="Q") 
+        acq_channel.connect_input(sequencers['acq'], path="I")
+
+        if readout_channel is not None:
+            readout_channel.connect_output(sequencers['acq'], path="I")
+            sequencers['acq'].mod_en_awg(True)
+            sequencers['acq'].nco_freq(readout_frequency_Hz)
+            sequencers['acq'].demod_en_acq(True)
+            # A static DC offset modulated by the NCO is the probe tone.
+            sequencers['acq'].offset_awg_path0(readout_amplitude) 
 
         # enable sync for the sequencers
-        sequencers['x'].enable_sync(True)
-        sequencers['y'].enable_sync(True)
-        sequencers['acq'].enable_sync(True)
+        sequencers['x'].sync_en(True)
+        sequencers['y'].sync_en(True)
+        sequencers['acq'].sync_en(True)
+
+        # The acquire instruction's time is only a wait; this sets the real integration window.
+        sequencers['acq'].integration_length_acq(sequence_options.get("integration_time_ns", 1000))
 
         # upload the sequence 
-        # using a set to avoid uploading the same sequence to the same sequencer multiple times
-        for sequencer in set(sequencers.values()):
-            sequencer.sequence(sequence)
+        for sequencer in {sequencers['x'], sequencers['y']}:
+            sequencer.sequence(sequences["sweep"])
+        sequencers['acq'].sequence(sequences["acquire"])
 
-        # arm and start the sequencers
-        cluster.arm_sequencers(seq_targets = seq_targets)
-        cluster.start_sequencers(seq_targets = seq_targets)
+        for module, seq_ind in seq_targets:
+            module.arm_sequencer(seq_ind)
+
+        # Start only our sequencers; wait_sync lines them up.
+        for module, seq_ind in seq_targets:
+            module.start_sequencer(seq_ind)
         
         return {
             "modules": modules,
-            "sequence": sequence,
+            "sequencers": sequencers,
+            "mode": "direct" if readout_channel is None else "set_readout",
+            "sequences": sequences,
             "seq_targets": seq_targets,
         }
     
-    def stop(self, cluster, seq_targets):
-        cluster.stop_sequencers(seq_targets=seq_targets)
-        cluster.get_sequencer_status(seq_targets=seq_targets)
+    @staticmethod
+    def _release_sequencer(module, seq_ind):
+        """Stop one sequencer and turn off its I/O connections and modulation."""
+        module.stop_sequencer(seq_ind)
+        sequencer = module.sequencers[seq_ind]
+        for name, parameter in sequencer.parameters.items():
+            if name.startswith(("connect_out", "connect_acq")):
+                parameter("off")
+            elif name in ("mod_en_awg", "demod_en_acq"):
+                parameter(False)
+            elif name in ("offset_awg_path0", "offset_awg_path1"):
+                parameter(0)
 
-    def _create_sequence(
+    def stop(self, seq_targets):
+        for module, seq_ind in seq_targets:
+            module.stop_sequencer(seq_ind)
+            # Keeps a probe tone from outliving the sweep.
+            sequencer = module.sequencers[seq_ind]
+            sequencer.offset_awg_path0(0)
+            sequencer.offset_awg_path1(0)
+
+        return [module.get_sequencer_status(seq_ind) for module, seq_ind in seq_targets]
+
+    def _create_sequences(
         self,
         x_module,
         y_module,
@@ -127,7 +212,7 @@ class QbloxVideoBackend:
         settle_time_ns: int = 1000,
         interleave: bool = False,
     ) -> dict:
-        """Create a compact nested-loop Q1ASM sweep and its acquisition bins."""
+        """Create the Q1ASM sweep for the X/Y outputs and the acquisition program for the QRM."""
         # detemine whether the requested voltage windows are within the mo
         x_max_voltage_mV = self._max_voltage_mV(x_module)
         y_max_voltage_mV = self._max_voltage_mV(y_module)
@@ -174,57 +259,75 @@ class QbloxVideoBackend:
         y_start_q1 = y_start_dac & 0xFFFFFFFF
 
         x_step_instruction = (f"add R1,{x_step_dac},R1" if x_step_dac >= 0
-                              else f"sub R1,{x_step_dac},R1"
+                              else f"sub R1,{-x_step_dac},R1"
                              )
         y_step_instruction = (f"add R2,{y_step_dac},R2" if y_step_dac >= 0
-                              else f"sub R2,{y_step_dac},R2"
+                              else f"sub R2,{-y_step_dac},R2"
                              )
 
-        # Initialize the program with synchronization and loop setup.
-        program_lines = [
+        # Every program spends 4 ns + settle + integration per pixel so wait_sync keeps them aligned.
+        def wait_lines(duration_ns, comment):
+            # A single wait is limited, so long durations are split into chunks.
+            lines = []
+            while duration_ns > 0:
+                chunk_ns = min(duration_ns, 65532)
+                lines.append(f"wait {chunk_ns}    # {comment}")
+                duration_ns -= chunk_ns
+            return lines
+
+        sweep_lines = [
             "wait_sync 4                        # synchronize this sequencer",
-            "frame_loop:                        # restart the sweep, overwriting this frame's bins",
-            "move 0,R0                          # acquisition-bin index for the first pixel",
+            "frame_loop:                        # restart the sweep",
             f"move {x_start_q1},R1              # initialize the X output DAC code",
             f"move {x_num_steps},R3             # number of X rows to scan",
             "x_loop:                            # start one row of the 2D scan",
             f"move {y_start_q1},R2              # reset Y to its start for each X row",
             f"move {y_num_steps},R4             # number of pixels in this Y row",
-            "y_loop:                            # start one pixel measurement",
+            "y_loop:                            # start one pixel",
             "set_awg_offs R1,R2                 # apply the current X and Y DAC codes",
             "upd_param 4                        # wait 4 ns for the output update to take effect",
-        ]
-
-        # Split the settling time into chunks of at most 65532 ns to fit the sequencer's wait instruction.
-        remaining_settle_ns = settle_time_ns
-        while remaining_settle_ns > 0:
-            wait_chunk_ns = min(remaining_settle_ns, 65532)
-            program_lines.append(
-                f"wait {wait_chunk_ns} # allow this chunk of the settling time"
-            )
-            remaining_settle_ns -= wait_chunk_ns
-
-        # Add the acquisition and loop instructions for the 2D scan.
-        program_lines.extend((
-            f"acquire 0,R0,{integration_time_ns}    # integrate this pixel, overwriting the previous frame's bin",
-            "add R0,1,R0                            # advance to the next pixel's acquisition bin",
+            *wait_lines(settle_time_ns + integration_time_ns, "hold while the pixel settles and is measured"),
             f"{y_step_instruction}                  # advance the Y DAC code",
             "loop R4,@y_loop                        # repeat until this row has all Y points",
             f"{x_step_instruction}                  # advance the X DAC code for the next row",
             "loop R3,@x_loop                        # repeat until all X rows are scanned",
+            "jmp @frame_loop                        # video mode: sweep forever",
+        ]
+
+        acquire_lines = [
+            "wait_sync 4                        # synchronize this sequencer",
+            "frame_loop:                        # restart the sweep, overwriting this frame's bins",
+            "move 0,R0                          # acquisition-bin index for the first pixel",
+            f"move {x_num_steps},R3             # number of X rows to scan",
+            "x_loop:                            # start one row of the 2D scan",
+            f"move {y_num_steps},R4             # number of pixels in this Y row",
+            "y_loop:                            # start one pixel",
+            *wait_lines(4 + settle_time_ns, "match the sweep's output update and settling"),
+            f"acquire 0,R0,{integration_time_ns}    # integrate this pixel, overwriting the previous frame's bin",
+            "add R0,1,R0                            # advance to the next pixel's acquisition bin",
+            "loop R4,@y_loop                        # repeat until this row has all Y points",
+            "loop R3,@x_loop                        # repeat until all X rows are scanned",
             "jmp @frame_loop                        # video mode: sweep forever, re-using the same bins",
-        ))
+        ]
 
         return {
-            "waveforms": {},
-            "weights": {},
-            "acquisitions": {
-                "frame": {
-                    "num_bins": x_num_steps * y_num_steps,
-                    "index": 0,
-                }
+            "sweep": {
+                "waveforms": {},
+                "weights": {},
+                "acquisitions": {},
+                "program": "\n".join(sweep_lines),
             },
-            "program": "\n".join(program_lines),
+            "acquire": {
+                "waveforms": {},
+                "weights": {},
+                "acquisitions": {
+                    "frame": {
+                        "num_bins": x_num_steps * y_num_steps,
+                        "index": 0,
+                    }
+                },
+                "program": "\n".join(acquire_lines),
+            },
         }
 
     def _create_waveform_sequence(self,
@@ -244,7 +347,7 @@ class QbloxVideoBackend:
             },
             "program": "\n".join(program_lines),
         }
-    
+
     @staticmethod
     def _max_voltage_mV(module) -> int:
         if module.is_qcm_type:
@@ -408,7 +511,7 @@ def _print_test_program(cluster: Cluster, config: dict) -> dict:
         for module in cluster.modules
         if module.slot_idx == config["module_slot"]
     )
-    sequence = QbloxVideoBackend(cluster)._create_sequence(
+    sequences = QbloxVideoBackend(cluster)._create_sequences(
         module,
         module,
         x_window_mV=config["x_window_mV"],
@@ -419,9 +522,10 @@ def _print_test_program(cluster: Cluster, config: dict) -> dict:
         settle_time_ns=config["settle_time_ns"],
     )
     sequencer = getattr(module, f"sequencer{config['sequencer_index']}")
-    sequencer.sequence(sequence)
-    print(sequence["program"])
-    return sequence
+    for name, sequence in sequences.items():
+        sequencer.sequence(sequence)
+        print(f"--- {name} program ---\n{sequence['program']}")
+    return sequences
 
 if __name__ == "__main__":
     if USE_HARDWARE_FOR_DEMO:

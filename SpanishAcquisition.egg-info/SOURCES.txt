@@ -13,6 +13,12 @@ examples/acquisition.py
 examples/data_explorer.py
 examples/virtual_setup.py
 spacq/__init__.py
+spacq/Libraries/__init__.py
+spacq/Libraries/QbloxSequenceHelpers/__init__.py
+spacq/Libraries/QbloxSequenceHelpers/benchmarkingV3.py
+spacq/Libraries/QbloxSequenceHelpers/instrumentQblox.py
+spacq/Libraries/QbloxSequenceHelpers/predistort.py
+spacq/Libraries/QbloxSequenceHelpers/sequence_helperV3.py
 spacq/devices/__init__.py
 spacq/devices/abstract_device.py
 spacq/devices/config.py
@@ -115,6 +121,7 @@ spacq/devices/qblox/__init__.py
 spacq/devices/qblox/qblox_cluster.py
 spacq/devices/qblox/spi_rack.py
 spacq/devices/qblox/mock/__init__.py
+spacq/devices/qblox/mock/mock_qblox_cluster.py
 spacq/devices/qblox/mock/mock_spi_rack.py
 spacq/devices/qblox/mock/tests/__init__.py
 spacq/devices/qblox/mock/tests/test_mock_spi_rack.py
@@ -171,13 +178,16 @@ spacq/gui/__init__.py
 spacq/gui/global_store.py
 spacq/gui/action/__init__.py
 spacq/gui/action/data_capture.py
+spacq/gui/action/qblox_video_backend.py
 spacq/gui/action/smooth_reset.py
+spacq/gui/action/video_mode.py
 spacq/gui/config/__init__.py
 spacq/gui/config/devices.py
 spacq/gui/config/measurement.py
 spacq/gui/config/pulse.py
 spacq/gui/config/scaling.py
 spacq/gui/config/variables.py
+spacq/gui/config/videomode.py
 spacq/gui/config/virtual_variables.py
 spacq/gui/config/device/__init__.py
 spacq/gui/config/device/device_config.py

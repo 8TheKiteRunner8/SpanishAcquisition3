@@ -15,6 +15,13 @@ from spacq.tool.box import Synchronized
 from ..abstract_device import AbstractDevice, AbstractSubdevice
 from ..tools import quantity_wrapped, quantity_unwrapped, str_to_bool
 
+# Entering this IP in the device config connects to a simulated cluster instead of hardware.
+DUMMY_IP_ADDRESS = "0.0.0.0"
+DUMMY_CLUSTER_CONFIG = {
+    2: ClusterType.CLUSTER_QCM,
+    4: ClusterType.CLUSTER_QRM,
+}
+
 MODULE_CHANNELS = {
     "QCM": {
         "outputs": ("O1", "O2", "O3", "O4"),
@@ -45,10 +52,10 @@ class QbloxChannelResource(Resource):
         self.module = qblox_module_subdevice
         self.channel_name = channel_name
         self.output_index = (
-            int(channel_name[1:]) if channel_name.startswith("O") else None
+            int(channel_name[1:])-1 if channel_name.startswith("O") else None
         )
         self.input_index = (
-            int(channel_name[1:]) if channel_name.startswith("I") else None
+            int(channel_name[1:])-1 if channel_name.startswith("I") else None
         )
 
     def __getattr__(self, name):
@@ -71,7 +78,7 @@ class QbloxChannelResource(Resource):
         path : str, optional
             The input path on the sequencer to connect to (default is "I").
         """
-        getattr(sequencer, f"connect_out{self.output_index-1}")(path)
+        getattr(sequencer, f"connect_out{self.output_index}")(path)
 
     def connect_input(self, sequencer, path: str = "I"):
         """
@@ -84,7 +91,7 @@ class QbloxChannelResource(Resource):
         path : str, optional
             The output path on the sequencer to connect to (default is "I").
         """
-        getattr(sequencer, f"connect_in{self.input_index-1}")(path)
+        getattr(sequencer, f"connect_acq_{path}")(f"in{self.input_index}")
 
 
 class QbloxModule(AbstractSubdevice):
@@ -156,11 +163,17 @@ class QbloxCluster(AbstractDevice):
         Connect to the Qblox cluster using the specified IP address.
         This will detect connected modules and create subdevices for each module.
         """
+        if self.ip_address == DUMMY_IP_ADDRESS:
+            log.warning("Using a dummy Qblox cluster; no hardware is connected.")
+            connection = {"dummy_cfg": DUMMY_CLUSTER_CONFIG}
+        else:
+            connection = {"identifier": self.ip_address}
+
         self.cluster = find_or_create_instrument(
             Cluster,
             name=f"Qblox_Cluster_{self.ip_address.replace('.', '_')}",
             recreate=True,
-            identifier=self.ip_address,
+            **connection,
         )
 
         # get connected modules
@@ -174,10 +187,7 @@ class QbloxCluster(AbstractDevice):
         self._connected()
 
     def _get_connected_modules(self):
-        for slot, qblox_module in self.cluster.modules.items():
-            if not qblox_module.present():
-                continue
-
+        for slot, qblox_module in self.cluster.get_connected_modules().items():
             module_type = self._identify_module_type(qblox_module)
             log.info("Detected slot %s: %s", slot, module_type)
 
