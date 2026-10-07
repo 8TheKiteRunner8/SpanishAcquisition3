@@ -114,7 +114,7 @@ class QbloxModule(AbstractSubdevice):
 
         super().__init__(device)
 
-        self.name = f"module_{self.slot_idx}_{module_type}"
+        self.name = f"{module_type}_{self.slot_idx}"
 
     def _setup(self):
         super()._setup()
@@ -181,13 +181,22 @@ class QbloxCluster(AbstractDevice):
         log.info("Detected Qblox modules: %s", sorted(self.modules.keys()))
 
         # create module subdevices
-        for slot, module in self.modules.items():
-            self.subdevices[slot] = module
+        for module in self.modules.values():
+            self.subdevices[module.name] = module
 
         self._connected()
 
     def _get_connected_modules(self):
-        for slot, qblox_module in self.cluster.get_connected_modules().items():
+        cluster_modules = self.cluster.modules
+        if isinstance(cluster_modules, dict):
+            cluster_modules = cluster_modules.items()
+        else:
+            cluster_modules = [(m.slot_idx, m) for m in cluster_modules]
+
+        for slot, qblox_module in cluster_modules:
+            if not qblox_module.present():
+                continue
+
             module_type = self._identify_module_type(qblox_module)
             log.info("Detected slot %s: %s", slot, module_type)
 

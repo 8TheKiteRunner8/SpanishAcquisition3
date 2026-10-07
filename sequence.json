@@ -1,0 +1,27 @@
+{
+    "waveforms": {},
+    "weights": {},
+    "acquisitions": {
+        "non_weighed": {
+            "num_bins": 10,
+            "index": 0
+        },
+        "weighed": {
+            "num_bins": 10,
+            "index": 1
+        },
+        "large": {
+            "num_bins": 131072,
+            "index": 2
+        },
+        "avg": {
+            "num_bins": 10,
+            "index": 3
+        },
+        "single": {
+            "num_bins": 1,
+            "index": 4
+        }
+    },
+    "program": "\n        move    1000, R0        #Loop iterator.\n\n    loop: acquire 0,1,20000   #Acquire bins and store them in \"non_weighed\" acquisition.\n        loop     R0, @loop #Run until number of iterations is done.\n\n        stop                #Stop.\n    "
+}

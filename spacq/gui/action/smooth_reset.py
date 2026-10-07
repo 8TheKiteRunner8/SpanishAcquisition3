@@ -27,17 +27,17 @@ class SmoothResetPanel(wx.Panel):
         panel_box.Add(reset_box, flag=wx.CENTER | wx.ALL, border=10)
 
         # To zero.
-        self.to_button = wx.Button(self, label='To Zero')
+        self.to_button = wx.Button(reset_static_box, label='To Zero')
         self.Bind(wx.EVT_BUTTON, self.OnResetToZero, self.to_button)
         reset_box.Add(self.to_button, flag=wx.EXPAND)
 
         # From zero.
-        self.from_button = wx.Button(self, label='From Zero')
+        self.from_button = wx.Button(reset_static_box, label='From Zero')
         self.Bind(wx.EVT_BUTTON, self.OnResetFromZero, self.from_button)
         reset_box.Add(self.from_button, flag=wx.EXPAND)
 
         # To Value
-        self.toVal_button = wx.Button(self, label='To Value')
+        self.toVal_button = wx.Button(reset_static_box, label='To Value')
         self.Bind(wx.EVT_BUTTON, self.OnResetToValue, self.toVal_button)
         reset_box.Add(self.toVal_button, flag=wx.EXPAND)
 
@@ -46,7 +46,7 @@ class SmoothResetPanel(wx.Panel):
         steps_box = wx.StaticBoxSizer(steps_static_box, wx.VERTICAL)
         reset_box.Add(steps_box, flag=wx.EXPAND)
 
-        self.reset_steps_input = wx.SpinCtrl(self, min=1, initial=10)
+        self.reset_steps_input = wx.SpinCtrl(steps_static_box, min=1, initial=10)
         steps_box.Add(self.reset_steps_input)
 
         self.SetSizer(panel_box)

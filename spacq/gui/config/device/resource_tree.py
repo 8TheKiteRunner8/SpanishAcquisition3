@@ -250,8 +250,7 @@ class ResourceTree(TreeListCtrl):
 
         if evt.Int == self.col_label:
             # Only resources can have labels.
-            if not (self.GetItemText(evt.GetItem(), self.col_r) or
-                    self.GetItemText(evt.GetItem(), self.col_w)):
+            if self.GetItemPyData(evt.GetItem()) is None:
                 evt.Veto()
             else:
                 self.old_label = self.GetItemText(

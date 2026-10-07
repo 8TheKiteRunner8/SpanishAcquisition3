@@ -136,7 +136,7 @@ class QbloxVideoBackend:
             self._release_sequencer(module, seq_ind)
             
         # connect channels to the sequencers of the corrsponding modules
-        # connect x and y to separate paths to match sequence conventions
+        # the program drives path0 (I) with the X code and path1 (Q) with the Y code
         x_channel.connect_output(sequencers['x'], path="I") 
         y_channel.connect_output(sequencers['y'], path="Q") 
         acq_channel.connect_input(sequencers['acq'], path="I")
@@ -175,6 +175,7 @@ class QbloxVideoBackend:
             "mode": "direct" if readout_channel is None else "set_readout",
             "sequences": sequences,
             "seq_targets": seq_targets,
+            "sequencers": sequencers,
         }
     
     @staticmethod

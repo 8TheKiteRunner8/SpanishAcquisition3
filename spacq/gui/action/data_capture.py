@@ -309,12 +309,12 @@ class DataCapturePanel(wx.Panel):
         panel_box.Add(capture_box, flag=wx.CENTER | wx.ALL, border=5)
 
         # Start.
-        self.start_button = wx.Button(self, label='Start')
+        self.start_button = wx.Button(capture_static_box, label='Start')
         self.Bind(wx.EVT_BUTTON, self.OnBeginCapture, self.start_button)
         capture_box.Add(self.start_button, flag=wx.CENTER)
 
         # Continuous.
-        self.continuous_checkbox = wx.CheckBox(self, label='Continuous')
+        self.continuous_checkbox = wx.CheckBox(capture_static_box, label='Continuous')
         capture_box.Add(self.continuous_checkbox, flag=wx.CENTER)
 
         # Export.
@@ -324,7 +324,7 @@ class DataCapturePanel(wx.Panel):
                       flag=wx.CENTER | wx.ALL, border=5)
 
         # Enabled.
-        self.export_enabled = wx.CheckBox(self, label='')
+        self.export_enabled =         wx.CheckBox(export_static_box, label='')
         self.export_enabled.Value = True
         export_box.Add(self.export_enabled, flag=wx.CENTER)
 

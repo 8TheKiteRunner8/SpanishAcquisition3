@@ -81,7 +81,7 @@ class AcquisitionApp(wx.App):
 
         # Measurements.
         submenu = wx.Menu()
-        menu.Append(wx.ID_ANY, '&Measurements', submenu)
+        menu.AppendSubMenu(submenu, '&Measurements')
 
         item = submenu.Append(wx.ID_ANY, 'Add &scalar...')
         self.Bind(wx.EVT_MENU, self.OnMenuConfigurationMeasurementsAddScalar, item)

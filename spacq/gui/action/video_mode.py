@@ -104,6 +104,8 @@ class VideoModeRunner:
 
     def stop(self):
         self._stop_event.set()
+        if self.run_result is not None:
+            self.backend.stop(self.run_result)
 
     def _select_execution_mode(self):
         """
