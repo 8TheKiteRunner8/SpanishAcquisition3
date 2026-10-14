@@ -185,7 +185,6 @@ class VideoDisplayPanel(wx.Panel):
 
 # The following classes are used for the video mode configuration
 class ConfigFileMixin:
-
     def create_file_buttons(self, parent):
         self.save_button = wx.Button(parent, label="Save")
         self.load_button = wx.Button(parent, label="Load")
@@ -397,8 +396,10 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
 
         self.measurement_name = wx.TextCtrl(self)
         self.resource_label = wx.TextCtrl(self)
+        self.set_readout = wx.CheckBox(self, label="Enable probe tone (set readout)")
+        self.set_readout.Bind(wx.EVT_CHECKBOX, self.OnReadoutModeChanged)
 
-        identity_form = wx.FlexGridSizer(2, 2, 5, 5)
+        identity_form = wx.FlexGridSizer(3, 2, 5, 5)
         identity_form.AddGrowableCol(1, 1)
         for label, control in (
             ("Name:", self.measurement_name),
@@ -406,6 +407,8 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
         ):
             identity_form.Add(wx.StaticText(self, label=label))
             identity_form.Add(control, 1, wx.EXPAND)
+        identity_form.Add((0, 0))
+        identity_form.Add(self.set_readout, 0, wx.EXPAND)
 
         # Only shown in "waveform" mode; hidden when using sequencer options.
         self.waveform_panel = wx.Panel(self)
@@ -422,14 +425,42 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
             waveform_form.Add(control, 1, wx.EXPAND)
         self.waveform_panel.SetSizer(waveform_form)
 
+        self.readout_panel = wx.Panel(self)
+        self.readout_resource_label = wx.TextCtrl(self.readout_panel)
+        self.readout_frequency_Hz = wx.TextCtrl(self.readout_panel, value="100000000")
+        self.readout_amplitude_mV = wx.TextCtrl(self.readout_panel, value="100")
+
+        readout_form = wx.FlexGridSizer(3, 2, 5, 5)
+        readout_form.AddGrowableCol(1, 1)
+        for label, control in (
+            ("Readout output resource:", self.readout_resource_label),
+            ("Probe frequency (Hz):", self.readout_frequency_Hz),
+            ("Probe amplitude (mV peak):", self.readout_amplitude_mV),
+        ):
+            readout_form.Add(wx.StaticText(self.readout_panel, label=label))
+            readout_form.Add(control, 1, wx.EXPAND)
+        self.readout_panel.SetSizer(readout_form)
+
         box = wx.StaticBoxSizer(
             wx.StaticBox(self, label="Acquistition"),
             wx.VERTICAL,
         )
         box.Add(identity_form, 0, wx.EXPAND | wx.ALL, 8)
         box.Add(self.waveform_panel, 0, wx.EXPAND | wx.ALL, 8)
+        box.Add(self.readout_panel, 0, wx.EXPAND | wx.ALL, 8)
+        self._update_readout_visibility()
 
         self.SetSizer(box)
+
+    def OnReadoutModeChanged(self, evt):
+        self._update_readout_visibility()
+        self.Layout()
+        parent = self.GetParent()
+        parent.Layout()
+        parent.Fit()
+
+    def _update_readout_visibility(self):
+        self.readout_panel.Show(self.set_readout.GetValue())
 
     def set_mode(self, mode):
         self.waveform_panel.Show(mode == "waveform")
@@ -439,6 +470,35 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
         configuration = {
             "resource_label": self.resource_label.GetValue().strip(),
         }
+
+        if self.set_readout.GetValue():
+            readout_resource_label = self.readout_resource_label.GetValue().strip()
+            if not readout_resource_label:
+                raise ValueError(
+                    "A readout output resource is required when set readout is enabled."
+                )
+            try:
+                frequency_Hz = float(self.readout_frequency_Hz.GetValue())
+                amplitude_mV = float(self.readout_amplitude_mV.GetValue())
+            except ValueError as error:
+                raise ValueError(
+                    "Readout frequency and amplitude must be numbers."
+                ) from error
+            if not math.isfinite(frequency_Hz):
+                raise ValueError("Readout frequency must be finite.")
+            if not math.isfinite(amplitude_mV) or amplitude_mV <= 0:
+                raise ValueError("Readout amplitude must be a positive finite value.")
+
+            configuration.update({
+                "mode": "set_readout",
+                "readout_resource_label": readout_resource_label,
+                "readout_options": {
+                    "frequency_Hz": frequency_Hz,
+                    "amplitude_mV": amplitude_mV,
+                },
+            })
+        else:
+            configuration["mode"] = "direct"
 
         if not self.waveform_panel.IsShown():
             return configuration
@@ -469,6 +529,21 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
             str(configuration.get("resource_label", ""))
         )
         self.samples.SetValue(repr(samples))
+        readout_mode = configuration.get("mode", "direct") == "set_readout"
+        self.set_readout.SetValue(readout_mode)
+        self._update_readout_visibility()
+        self.readout_resource_label.SetValue(
+            str(configuration.get("readout_resource_label", ""))
+        )
+        readout_options = configuration.get("readout_options", {})
+        if not isinstance(readout_options, dict):
+            raise ValueError("Readout options configuration must be an object.")
+        self.readout_frequency_Hz.SetValue(
+            str(readout_options.get("frequency_Hz", 100000000))
+        )
+        self.readout_amplitude_mV.SetValue(
+            str(readout_options.get("amplitude_mV", 100))
+        )
 
 class SequencerOptionsPanel(ConfigFileMixin, wx.Panel):
     """Shared 2D-sweep parameters used to build the nested-loop Q1ASM program."""
@@ -651,15 +726,17 @@ class VideoModeConfigDialog(ConfigFileMixin, wx.Dialog):
             dialog.Destroy()
     
     def get_configuration(self):
-        mode = self._get_mode()
+        sweep_mode = self._get_mode()
+        acquisition = self.acquisition_panel.get_configuration()
         configuration = {
-            "mode": mode,
+            "mode": acquisition["mode"],
+            "sweep_mode": sweep_mode,
             "x": self.x_panel.get_configuration(),
             'y': self.y_panel.get_configuration(),
-            'acquisition': self.acquisition_panel.get_configuration(),
+            'acquisition': acquisition,
         }
 
-        if mode == "sequencer_options":
+        if sweep_mode == "sequencer_options":
             configuration["sequence_options"] = self.sequencer_options_panel.get_configuration()
 
         return configuration
@@ -668,7 +745,10 @@ class VideoModeConfigDialog(ConfigFileMixin, wx.Dialog):
         if not isinstance(configuration, dict):
             raise ValueError("Video-mode configuration must be an object")
 
-        mode = configuration.get("mode", "waveform")
+        mode = configuration.get("sweep_mode")
+        if mode is None:
+            legacy_mode = configuration.get("mode", "waveform")
+            mode = legacy_mode if legacy_mode in ("waveform", "sequencer_options") else "waveform"
         self.sequencer_options_radio.SetValue(mode == "sequencer_options")
         self.waveform_radio.SetValue(mode != "sequencer_options")
 
@@ -821,9 +901,8 @@ class VideoModeFrame(wx.Frame):
             )
             return
 
-        self.runner = VideoModeRunner(self.global_store, self.video_mode_config)
-
         try:
+            self.runner = VideoModeRunner(self.global_store, self.video_mode_config)
             self.runner.run()
         except Exception as error:
             wx.MessageBox(str(error), "Video Mode", wx.OK | wx.ICON_ERROR)

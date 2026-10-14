@@ -26,6 +26,14 @@ class VideoModeRunner:
         self.x_resource = self._resolve_resource(self.config["x"]["resource_label"])
         self.y_resource = self._resolve_resource(self.config["y"]["resource_label"])
         self.acquisition_resource = self._resolve_resource(self.config["acquisition"]["resource_label"])
+        self.readout_resource = None
+        if self.config.get("mode", "direct") == "set_readout":
+            readout_label = self.config["acquisition"].get("readout_resource_label")
+            if not readout_label:
+                raise ValueError(
+                    "A readout output resource is required when set readout is enabled."
+                )
+            self.readout_resource = self._resolve_resource(readout_label)
 
         self.pulse_device = self._get_device(self.x_resource)
         self.acquisition_device = self._get_device(self.acquisition_resource)
@@ -82,6 +90,9 @@ class VideoModeRunner:
         config["x_channel"] = self.x_resource
         config["y_channel"] = self.y_resource
         config["acq_channel"] = self.acquisition_resource
+        if self.readout_resource is not None:
+            config["readout_channel"] = self.readout_resource
+            config["readout_options"] = self.config["acquisition"]["readout_options"]
 
         self.run_result = self.backend.prepare_and_run(config)
         return self.run_result

@@ -79,7 +79,7 @@ class QbloxChannelResource(Resource):
             The input path on the sequencer to connect to (default is "I").
         """
         getattr(sequencer, f"connect_out{self.output_index}")(path)
-
+        
     def connect_input(self, sequencer, path: str = "I"):
         """
         Connect this channel as an input to the specified path on the sequencer.
