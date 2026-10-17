@@ -42,7 +42,7 @@ class SmoothResetPanel(wx.Panel):
         reset_box.Add(self.toVal_button, flag=wx.EXPAND)
 
         # Steps.
-        steps_static_box = wx.StaticBox(self, label='Steps')
+        steps_static_box = wx.StaticBox(reset_static_box, label='Steps')
         steps_box = wx.StaticBoxSizer(steps_static_box, wx.VERTICAL)
         reset_box.Add(steps_box, flag=wx.EXPAND)
 

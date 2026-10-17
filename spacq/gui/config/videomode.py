@@ -10,16 +10,24 @@ The components of the GUI are represented by the following classes
 
 import wx
 import ast
+import csv
 import json
 import math
+import os
+import re
+import time
 import logging
 
+import numpy as np
 from threading import Lock, Thread
+import threading
+from spacq.interface.units import Quantity
 import spacq.gui.objectlistview as ObjectListView
 from spacq.gui.action.video_mode import VideoModeRunner
 from dataclasses import dataclass, field
 
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 
 log = logging.getLogger(__name__)
@@ -30,8 +38,23 @@ class VariableRow:
     var: object
     value: float
     step_size: float
+    initial_value: float = 0.0
+    cancel: threading.Event = field(default_factory=threading.Event)
+    thread: object = None
+
+    @property
+    def resource_name(self):
+        return getattr(self.var, "resource_name", "")
 
 class VideoVariablePanel(wx.Panel):
+    """
+    Extra parameters held at a value by their SpacQ resource (e.g. the spirac DC sources)
+    while video mode runs. Values are only ever changed in steps of the row's step size,
+    and are returned to where they started when the panel is restored.
+    """
+    # Seconds between steps, so the source and any filter on the line can settle.
+    STEP_DELAY_S = 0.05
+
     def __init__(self, parent, global_store, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.global_store = global_store
@@ -39,19 +62,27 @@ class VideoVariablePanel(wx.Panel):
 
         self.olv = ObjectListView.ObjectListView(self, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
         self.olv.SetColumns([
-            ObjectListView.ColumnDefn("Name", "left", 140, "name"),
+            ObjectListView.ColumnDefn("Name", "left", 140, "name", isEditable=False),
             ObjectListView.ColumnDefn("Value", "right", 100, "value"),
             ObjectListView.ColumnDefn("Step size", "right", 90, "step_size"),
-            ObjectListView.ColumnDefn("Action", "left", 80, "action"),
+            ObjectListView.ColumnDefn("Resource", "left", 120, "resource_name", isEditable=False),
         ])
         self.olv.SetMinSize((320, 200))
+        self.olv.cellEditMode = self.olv.CELLEDIT_DOUBLECLICK
+        self.olv.Bind(ObjectListView.EVT_CELL_EDIT_FINISHING, self.OnCellEditFinishing)
 
         self.add_button = wx.Button(self, label="Add parameter")
         self.add_button.Bind(wx.EVT_BUTTON, self.OnAddParameter)
+        self.remove_button = wx.Button(self, label="Remove parameter")
+        self.remove_button.Bind(wx.EVT_BUTTON, self.OnRemoveParameter)
+
+        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        button_sizer.Add(self.add_button, 1, wx.EXPAND | wx.ALL, 4)
+        button_sizer.Add(self.remove_button, 1, wx.EXPAND | wx.ALL, 4)
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.olv, 1, wx.EXPAND)
-        sizer.Add(self.add_button, 0, wx.EXPAND | wx.ALL, 4)
+        sizer.Add(button_sizer, 0, wx.EXPAND)
         self.SetSizer(sizer)
 
         self.refresh_rows()
@@ -59,16 +90,44 @@ class VideoVariablePanel(wx.Panel):
     def refresh_rows(self):
         self.olv.SetObjects(self.rows)
 
+    def _resource(self, row):
+        resource = self.global_store.resources.get(row.resource_name)
+        if resource is None or not resource.writable:
+            raise ValueError(
+                f"{row.name!r} has no writable resource ({row.resource_name!r})."
+            )
+        return resource
+
+    @staticmethod
+    def _number_from_reading(var, reading):
+        # Mirrors how a variable's constant is expressed: in the variable's own units.
+        if isinstance(reading, Quantity):
+            if getattr(var, "type", None) == "quantity" and getattr(var, "units", None):
+                return float(reading.value / Quantity(1, var.units).value)
+            return float(reading.original_value)
+        return float(reading)
+
+    def _read_value(self, var):
+        try:
+            resource = self.global_store.resources[var.resource_name]
+            if resource.readable:
+                return self._number_from_reading(var, resource.value)
+        except Exception:
+            log.exception("Could not read %r; using its constant instead.", var.resource_name)
+        return float(getattr(var, "const", 0.0))
+
     def add_variable_row(self, name, var):
         if any(row.name == name for row in self.rows):
             return
 
+        value = self._read_value(var)
         self.rows.append(
             VariableRow(
                 name=name,
                 var=var,
-                value=float(getattr(var, "const", 0.0)),
+                value=value,
                 step_size=0.001,
+                initial_value=value,
             )
         )
         self.refresh_rows()
@@ -77,12 +136,13 @@ class VideoVariablePanel(wx.Panel):
         existing = {r.name for r in self.rows}
         available = [
             (name, var)
-            for name, var in self.global_store.variables.items() if name not in existing
+            for name, var in self.global_store.variables.items()
+            if name not in existing and getattr(var, "resource_name", "")
         ]
 
         if not available:
             wx.MessageBox(
-                "No additional variables are available.",
+                "No additional variables with a resource are available.",
                 "Add parameter",
                 wx.OK | wx.ICON_INFORMATION,
             )
@@ -109,23 +169,88 @@ class VideoVariablePanel(wx.Panel):
             dlg.Destroy()
 
     def OnRemoveParameter(self, evt):
-        existing = {r.name for r in self.rows}
-        dlg = wx.SingleChoiceDialog(
-            self,
-            "Select a variable to add",
-            "Add parameter",
-            existing,
-        )
+        selected = self.olv.GetSelectedObjects()
+        if not selected:
+            wx.MessageBox(
+                "Select a parameter to remove.",
+                "Remove parameter",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+
+        for row in selected:
+            # Removing a parameter returns its resource to the value it had when added.
+            self._start_ramp(row, row.initial_value)
+            self.rows.remove(row)
+        self.refresh_rows()
+
+    def OnCellEditFinishing(self, evt):
+        col = evt.objectListView.columns[evt.subItemIndex]
+        row = evt.rowModel
+
         try:
-            if dlg.ShowModal() == wx.ID_OK:
-                selected_name = dlg.GetStringSelection()
-                for var in existing:
-                    if var.name == selected_name:
-                        self.add_variable_row(var)
-                        break
-        finally:
-            dlg.Destroy()
-        # self.rows.pop(dlg)
+            new_value = float(evt.editor.Value)
+        except (TypeError, ValueError):
+            evt.Veto()
+            return
+
+        if col.valueGetter == "value":
+            # The displayed value follows the ramp, so the edit itself is not applied.
+            evt.Veto()
+            try:
+                self._start_ramp(row, new_value)
+            except Exception as error:
+                wx.MessageBox(str(error), "Set parameter", wx.OK | wx.ICON_ERROR)
+        elif col.valueGetter == "step_size":
+            if new_value <= 0:
+                evt.Veto()
+                wx.MessageBox("Step size must be positive.", "Set parameter", wx.OK | wx.ICON_ERROR)
+
+    def _start_ramp(self, row, target):
+        """Walk the row's resource to target in steps no larger than the step size."""
+        resource = self._resource(row)
+
+        # A new target replaces any ramp already running for this row.
+        row.cancel.set()
+        if row.thread is not None and row.thread.is_alive():
+            row.thread.join(timeout=5)
+        row.cancel = threading.Event()
+
+        row.thread = Thread(
+            target=self._ramp, args=(row, resource, target, row.cancel), daemon=True
+        )
+        row.thread.start()
+
+    def _ramp(self, row, resource, target, cancel):
+        try:
+            start = row.value
+            step = max(abs(row.step_size), 1e-12)
+            num_steps = max(1, math.ceil(abs(target - start) / step - 1e-9))
+            for value in np.linspace(start, target, num_steps + 1)[1:]:
+                if cancel.is_set():
+                    return
+                resource.value = row.var.with_type(float(value))
+                row.value = float(value)
+                wx.CallAfter(self._refresh_row, row)
+                time.sleep(self.STEP_DELAY_S)
+        except Exception as error:
+            log.exception("Could not step %r.", row.name)
+            wx.CallAfter(wx.MessageBox, str(error), "Set parameter", wx.OK | wx.ICON_ERROR)
+
+    def _refresh_row(self, row):
+        if self and row in self.rows:
+            self.olv.RefreshObject(row)
+
+    def restore_all(self):
+        """Step every parameter back to the value it had when it was added; blocks until done."""
+        for row in list(self.rows):
+            try:
+                self._start_ramp(row, row.initial_value)
+            except Exception:
+                log.exception("Could not restore %r.", row.name)
+        for row in list(self.rows):
+            if row.thread is not None:
+                row.thread.join(timeout=60)
 
 class VideoDisplayPanel(wx.Panel):
     def __init__(self, parent, global_store, *args, **kwargs):
@@ -144,6 +269,10 @@ class VideoDisplayPanel(wx.Panel):
         self.resource_backup = None
         self.latest_frame = None
         self.image = None
+        self.colorbar = None
+        self.title = ""
+        self.x_label = "X"
+        self.y_label = "Y"
 
         self.running_lock = Lock()
 
@@ -153,6 +282,22 @@ class VideoDisplayPanel(wx.Panel):
         display_box = wx.BoxSizer(wx.VERTICAL)
         display_box.Add(self.canvas, 1, wx.EXPAND)
         self.SetSizer(display_box)
+
+    def set_labels(self, title, x_label, y_label):
+        """Set the plot title (measurement name) and the plunger gate names for the axes."""
+        self.title = title
+        self.x_label = x_label
+        self.y_label = y_label
+
+    def reset(self):
+        """Forget the previous run so a new configuration gets fresh axes and colorbar."""
+        self.latest_frame = None
+        self.image = None
+        if self.colorbar is not None:
+            self.colorbar.remove()
+            self.colorbar = None
+        self.axis.clear()
+        self.canvas.draw_idle()
 
     def set_frame(self, frame):
         # Called via wx.CallAfter from the streaming worker thread.
@@ -173,15 +318,61 @@ class VideoDisplayPanel(wx.Panel):
 
         if self.image is None:
             self.image = self.axis.imshow(values.T, origin="lower", aspect="auto", extent=extent)
-            self.axis.set_xlabel("X (mV)")
-            self.axis.set_ylabel("Y (mV)")
-            self.figure.colorbar(self.image, ax=self.axis)
+            self.colorbar = self.figure.colorbar(self.image, ax=self.axis)
         else:
             self.image.set_data(values.T)
             self.image.set_extent(extent)
             self.image.autoscale()
 
+        self.axis.set_title(self.title)
+        self.axis.set_xlabel(f"{self.x_label} (mV)")
+        self.axis.set_ylabel(f"{self.y_label} (mV)")
         self.canvas.draw_idle()
+
+    def capture(self, directory):
+        """
+        Save the latest frame as CSV and PNG in the directory.
+        Both share the name measurement_xaxis_yaxis_date_time.
+        Returns the (csv_path, png_path) written.
+        """
+        if self.latest_frame is None:
+            raise RuntimeError("No frame has been acquired yet.")
+
+        frame = self.latest_frame
+        stem = "_".join(
+            _safe_filename_part(part)
+            for part in (self.title, self.x_label, self.y_label, time.strftime("%Y%m%d_%H%M%S"))
+        )
+        csv_path = os.path.join(directory, stem + ".csv")
+        png_path = os.path.join(directory, stem + ".png")
+
+        # Rows follow the acquisition bin order: X is the slow axis, Y the fast axis.
+        x_grid, y_grid = np.meshgrid(frame["x_mV"], frame["y_mV"], indexing="ij")
+        with open(csv_path, "w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow([f"{self.x_label}_mV", f"{self.y_label}_mV", frame.get("channel", "value")])
+            writer.writerows(zip(x_grid.ravel(), y_grid.ravel(), frame["values"].ravel()))
+
+        # A standalone figure keeps the saved image independent of the live view.
+        figure = Figure(figsize=(7, 5.5))
+        axis = figure.subplots()
+        x_mV, y_mV = frame["x_mV"], frame["y_mV"]
+        image = axis.imshow(
+            frame["values"].T, origin="lower", aspect="auto",
+            extent=(x_mV[0], x_mV[-1], y_mV[0], y_mV[-1]),
+        )
+        figure.colorbar(image, ax=axis)
+        axis.set_title(self.title)
+        axis.set_xlabel(f"{self.x_label} (mV)")
+        axis.set_ylabel(f"{self.y_label} (mV)")
+        figure.tight_layout()
+        figure.savefig(png_path, dpi=150)
+
+        return csv_path, png_path
+
+def _safe_filename_part(text):
+    cleaned = re.sub(r"[^\w.\-]+", "-", str(text)).strip("-")
+    return cleaned or "unnamed"
 
 # The following classes are used for the video mode configuration
 class ConfigFileMixin:
@@ -262,8 +453,9 @@ class InputPanel(ConfigFileMixin, wx.Panel):
 
         self.axis = axis
 
-        self.gate_name = wx.TextCtrl(self)
-        self.resource_label = wx.TextCtrl(self)
+        static_box = wx.StaticBox(self, label=f"{axis} input")
+        self.gate_name = wx.TextCtrl(static_box)
+        self.resource_label = wx.TextCtrl(static_box)
 
         identity_form = wx.FlexGridSizer(2, 2, 5, 5)
         identity_form.AddGrowableCol(1, 1)
@@ -271,11 +463,11 @@ class InputPanel(ConfigFileMixin, wx.Panel):
             ("Gate name:", self.gate_name),
             ("Resource Label:", self.resource_label),
         ):
-            identity_form.Add(wx.StaticText(self, label=label))
+            identity_form.Add(wx.StaticText(static_box, label=label))
             identity_form.Add(control, 1, wx.EXPAND)
 
         # Only shown in "waveform" mode; hidden when using sequencer options.
-        self.waveform_panel = wx.Panel(self)
+        self.waveform_panel = wx.Panel(static_box)
         self.waveform = wx.TextCtrl(self.waveform_panel, value="[0, 0, 0]")
         self.maximum_voltage = wx.TextCtrl(self.waveform_panel, value="0")
         self.time_step = wx.TextCtrl(self.waveform_panel, value="1e-9")
@@ -291,10 +483,7 @@ class InputPanel(ConfigFileMixin, wx.Panel):
             waveform_form.Add(control, 1, wx.EXPAND)
         self.waveform_panel.SetSizer(waveform_form)
 
-        box = wx.StaticBoxSizer(
-            wx.StaticBox(self, label=f"{axis} input"),
-            wx.VERTICAL,
-        )
+        box = wx.StaticBoxSizer(static_box, wx.VERTICAL)
         box.Add(identity_form, 0, wx.EXPAND | wx.ALL, 8)
         box.Add(self.waveform_panel, 0, wx.EXPAND | wx.ALL, 8)
 
@@ -394,9 +583,10 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
 
-        self.measurement_name = wx.TextCtrl(self)
-        self.resource_label = wx.TextCtrl(self)
-        self.set_readout = wx.CheckBox(self, label="Enable probe tone (set readout)")
+        static_box = wx.StaticBox(self, label="Acquistition")
+        self.measurement_name = wx.TextCtrl(static_box)
+        self.resource_label = wx.TextCtrl(static_box)
+        self.set_readout = wx.CheckBox(static_box, label="Enable probe tone (set readout)")
         self.set_readout.Bind(wx.EVT_CHECKBOX, self.OnReadoutModeChanged)
 
         identity_form = wx.FlexGridSizer(3, 2, 5, 5)
@@ -405,13 +595,13 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
             ("Name:", self.measurement_name),
             ("Resource label:", self.resource_label),
         ):
-            identity_form.Add(wx.StaticText(self, label=label))
+            identity_form.Add(wx.StaticText(static_box, label=label))
             identity_form.Add(control, 1, wx.EXPAND)
         identity_form.Add((0, 0))
         identity_form.Add(self.set_readout, 0, wx.EXPAND)
 
         # Only shown in "waveform" mode; hidden when using sequencer options.
-        self.waveform_panel = wx.Panel(self)
+        self.waveform_panel = wx.Panel(static_box)
         self.samples = wx.TextCtrl(self.waveform_panel, value="[0]")
         self.time_step = wx.TextCtrl(self.waveform_panel, value="1e-9")
 
@@ -425,7 +615,7 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
             waveform_form.Add(control, 1, wx.EXPAND)
         self.waveform_panel.SetSizer(waveform_form)
 
-        self.readout_panel = wx.Panel(self)
+        self.readout_panel = wx.Panel(static_box)
         self.readout_resource_label = wx.TextCtrl(self.readout_panel)
         self.readout_frequency_Hz = wx.TextCtrl(self.readout_panel, value="100000000")
         self.readout_amplitude_mV = wx.TextCtrl(self.readout_panel, value="100")
@@ -441,10 +631,7 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
             readout_form.Add(control, 1, wx.EXPAND)
         self.readout_panel.SetSizer(readout_form)
 
-        box = wx.StaticBoxSizer(
-            wx.StaticBox(self, label="Acquistition"),
-            wx.VERTICAL,
-        )
+        box = wx.StaticBoxSizer(static_box, wx.VERTICAL)
         box.Add(identity_form, 0, wx.EXPAND | wx.ALL, 8)
         box.Add(self.waveform_panel, 0, wx.EXPAND | wx.ALL, 8)
         box.Add(self.readout_panel, 0, wx.EXPAND | wx.ALL, 8)
@@ -468,6 +655,7 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
 
     def get_configuration(self):
         configuration = {
+            "measurement_name": self.measurement_name.GetValue().strip(),
             "resource_label": self.resource_label.GetValue().strip(),
         }
 
@@ -525,6 +713,9 @@ class AcquistitionPanel(ConfigFileMixin, wx.Panel):
         if not isinstance(samples, list):
             raise ValueError("Acquistition samples must be a list.")
 
+        self.measurement_name.SetValue(
+            str(configuration.get("measurement_name", ""))
+        )
         self.resource_label.SetValue(
             str(configuration.get("resource_label", ""))
         )
@@ -550,14 +741,15 @@ class SequencerOptionsPanel(ConfigFileMixin, wx.Panel):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
 
-        self.x_start_mV = wx.TextCtrl(self, value="-50")
-        self.x_end_mV = wx.TextCtrl(self, value="50")
-        self.y_start_mV = wx.TextCtrl(self, value="-50")
-        self.y_end_mV = wx.TextCtrl(self, value="50")
-        self.x_num_steps = wx.TextCtrl(self, value="8")
-        self.y_num_steps = wx.TextCtrl(self, value="8")
-        self.integration_time_ns = wx.TextCtrl(self, value="1000")
-        self.settle_time_ns = wx.TextCtrl(self, value="1000")
+        static_box = wx.StaticBox(self, label="Sequencer options")
+        self.x_start_mV = wx.TextCtrl(static_box, value="-50")
+        self.x_end_mV = wx.TextCtrl(static_box, value="50")
+        self.y_start_mV = wx.TextCtrl(static_box, value="-50")
+        self.y_end_mV = wx.TextCtrl(static_box, value="50")
+        self.x_num_steps = wx.TextCtrl(static_box, value="8")
+        self.y_num_steps = wx.TextCtrl(static_box, value="8")
+        self.integration_time_ns = wx.TextCtrl(static_box, value="1000")
+        self.settle_time_ns = wx.TextCtrl(static_box, value="1000")
 
         form = wx.FlexGridSizer(8, 2, 5, 5)
         form.AddGrowableCol(1, 1)
@@ -574,13 +766,10 @@ class SequencerOptionsPanel(ConfigFileMixin, wx.Panel):
         ]
 
         for label, control in fields:
-            form.Add(wx.StaticText(self, label=label))
+            form.Add(wx.StaticText(static_box, label=label))
             form.Add(control, 1, wx.EXPAND)
 
-        box = wx.StaticBoxSizer(
-            wx.StaticBox(self, label="Sequencer options"),
-            wx.VERTICAL,
-        )
+        box = wx.StaticBoxSizer(static_box, wx.VERTICAL)
         box.Add(form, 1, wx.EXPAND | wx.ALL, 8)
 
         self.SetSizer(box)
@@ -845,7 +1034,6 @@ class VideoModeFrame(wx.Frame):
         self.video_mode_config = None
         self.runner = None
         self.stream_thread = None
-
         self.main = wx.Panel(self)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
 
@@ -901,6 +1089,8 @@ class VideoModeFrame(wx.Frame):
             )
             return
 
+        self._stop_runner()
+
         try:
             self.runner = VideoModeRunner(self.global_store, self.video_mode_config)
             self.runner.run()
@@ -908,6 +1098,14 @@ class VideoModeFrame(wx.Frame):
             wx.MessageBox(str(error), "Video Mode", wx.OK | wx.ICON_ERROR)
             self.runner = None
             return
+
+        config = self.video_mode_config
+        self.video_display_panel.reset()
+        self.video_display_panel.set_labels(
+            config.get("acquisition", {}).get("measurement_name") or "Measurement",
+            config["x"].get("gate_name") or "X",
+            config["y"].get("gate_name") or "Y",
+        )
 
         self.stream_thread = Thread(target=self._stream_frames, daemon=True)
         self.stream_thread.start()
@@ -934,16 +1132,50 @@ class VideoModeFrame(wx.Frame):
             dialog.Destroy()
         
     def OnCapture(self, evt):
-        #TODO
-        pass
+        data_capture_panel = getattr(self.GetParent(), "data_capture_panel", None)
+        directory = ""
+        if data_capture_panel is not None:
+            directory = data_capture_panel.directory_browse_button.GetValue()
+
+        if not directory or not os.path.isdir(directory):
+            wx.MessageBox(
+                "Select a valid export directory in the sweep parameters window first.",
+                "Capture frame",
+                wx.OK | wx.ICON_ERROR,
+            )
+            return
+
+        try:
+            csv_path, png_path = self.video_display_panel.capture(directory)
+        except Exception as error:
+            wx.MessageBox(str(error), "Capture frame", wx.OK | wx.ICON_ERROR)
+            return
+
+        wx.MessageBox(
+            f"Saved:\n{csv_path}\n{png_path}",
+            "Capture frame",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+
+    def _stop_runner(self):
+        # The stream thread must be gone before anything else talks to the cluster.
+        if self.runner is not None:
+            self.runner.stop()
+        if self.stream_thread is not None and self.stream_thread.is_alive():
+            self.stream_thread.join(timeout=5)
 
     def OnStop(self,evt):
-        if self.runner is not None:
-            self.runner.stop()
+        self._stop_runner()
 
     def OnClose(self, evt):
+        self._stop_runner()
         if self.runner is not None:
-            self.runner.stop()
+            try:
+                self.runner.reset_cluster()
+            except Exception:
+                log.exception("Could not reset the Qblox cluster on close.")
+        # The Qblox no longer adds anything, so the spirac values can now be walked back.
+        self.video_variable_panel.restore_all()
         self.close_callback()
         evt.Skip()
         self.Destroy()

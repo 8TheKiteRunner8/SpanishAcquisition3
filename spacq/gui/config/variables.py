@@ -1,4 +1,5 @@
 import wx
+from threading import Thread
 
 from numpy import array
 from spacq.interface.units import Quantity
@@ -270,14 +271,14 @@ class ConditionEditor(Dialog):
 
         left_arg_box = wx.BoxSizer(wx.VERTICAL)
         condition_box.Add(left_arg_box)
-        left_arg_input = wx.TextCtrl(self, size=(150, -1))
+        left_arg_input = wx.TextCtrl(condition_static_box, size=(150, -1))
         left_arg_box.Add(left_arg_input)
 
         # Operator
 
         operators = ['<', '==', '!=', '>']
         self.op_menu = wx.ComboBox(
-            self, choices=operators, style=wx.CB_READONLY, size=(70, -1))
+            condition_static_box, choices=operators, style=wx.CB_READONLY, size=(70, -1))
         self.op_menu.SetStringSelection(operators[0])
         condition_box.Add(self.op_menu)
 
@@ -285,7 +286,7 @@ class ConditionEditor(Dialog):
 
         right_arg_box = wx.BoxSizer(wx.VERTICAL)
         condition_box.Add(right_arg_box)
-        right_arg_input = wx.TextCtrl(self, size=(150, -1))
+        right_arg_input = wx.TextCtrl(condition_static_box, size=(150, -1))
         right_arg_box.Add(right_arg_input)
 
         self.args = [left_arg_input, right_arg_input]
@@ -298,30 +299,30 @@ class ConditionEditor(Dialog):
         self.units_input = []
         for i in range(0, 2):
             type_static_box = wx.StaticBox(
-                self, label='Argument {0}'.format(i+1))
+                condition_static_box, label='Argument {0}'.format(i+1))
             type_box = wx.StaticBoxSizer(type_static_box, wx.VERTICAL)
             arg_boxes[i].Add(type_box, flag=wx.CENTER | wx.ALL, border=5)
 
             types = {}
 
             types['float'] = wx.RadioButton(
-                self, label='Float', style=wx.RB_GROUP)
+                type_static_box, label='Float', style=wx.RB_GROUP)
             type_box.Add(types['float'], flag=wx.ALIGN_LEFT | wx.ALL, border=5)
 
-            types['integer'] = wx.RadioButton(self, label='Integer')
+            types['integer'] = wx.RadioButton(type_static_box, label='Integer')
             type_box.Add(types['integer'],
                          flag=wx.ALIGN_LEFT | wx.ALL, border=5)
 
-            types['string'] = wx.RadioButton(self, label='String')
+            types['string'] = wx.RadioButton(type_static_box, label='String')
             type_box.Add(types['string'],
                          flag=wx.ALIGN_LEFT | wx.ALL, border=5)
 
-            types['resource name'] = wx.RadioButton(self, label='Resource')
+            types['resource name'] = wx.RadioButton(type_static_box, label='Resource')
             type_box.Add(types['resource name'],
                          flag=wx.ALIGN_LEFT | wx.ALL, border=5)
 
             # Units.
-            types['quantity'] = wx.RadioButton(self, label='Quantity')
+            types['quantity'] = wx.RadioButton(type_static_box, label='Quantity')
             type_box.Add(types['quantity'], flag=wx.CENTER)
 
             self.arg_type_setters.append(types)
@@ -552,21 +553,21 @@ class OutputVariableEditor(Dialog):
         smooth_box = wx.StaticBoxSizer(smooth_static_box, wx.HORIZONTAL)
         dialog_box.Add(smooth_box, flag=wx.CENTER | wx.ALL, border=5)
 
-        smooth_box.Add(wx.StaticText(self, label='Steps:'), flag=wx.CENTER)
+        smooth_box.Add(wx.StaticText(smooth_static_box, label='Steps:'), flag=wx.CENTER)
 
-        self.smooth_steps_input = wx.SpinCtrl(self, min=1, initial=100)
+        self.smooth_steps_input = wx.SpinCtrl(smooth_static_box, min=1, initial=100)
         smooth_box.Add(self.smooth_steps_input,
                        flag=wx.CENTER | wx.ALL, border=5)
 
-        self.smooth_from_checkbox = wx.CheckBox(self, label='From const')
+        self.smooth_from_checkbox = wx.CheckBox(smooth_static_box, label='From const')
         smooth_box.Add(self.smooth_from_checkbox,
                        flag=wx.CENTER | wx.ALL, border=5)
 
-        self.smooth_to_checkbox = wx.CheckBox(self, label='To const')
+        self.smooth_to_checkbox = wx.CheckBox(smooth_static_box, label='To const')
         smooth_box.Add(self.smooth_to_checkbox,
                        flag=wx.CENTER | wx.ALL, border=5)
 
-        self.smooth_transition_checkbox = wx.CheckBox(self, label='Transition')
+        self.smooth_transition_checkbox = wx.CheckBox(smooth_static_box, label='Transition')
         smooth_box.Add(self.smooth_transition_checkbox,
                        flag=wx.CENTER | wx.ALL, border=5)
 
@@ -576,21 +577,21 @@ class OutputVariableEditor(Dialog):
         dialog_box.Add(type_box, flag=wx.CENTER | wx.ALL, border=5)
 
         self.type_float = wx.RadioButton(
-            self, label='Float', style=wx.RB_GROUP)
+            type_static_box, label='Float', style=wx.RB_GROUP)
         type_box.Add(self.type_float, flag=wx.CENTER | wx.ALL, border=5)
 
-        self.type_integer = wx.RadioButton(self, label='Integer')
+        self.type_integer = wx.RadioButton(type_static_box, label='Integer')
         type_box.Add(self.type_integer, flag=wx.CENTER | wx.ALL, border=5)
 
         # Units.
-        quantity_static_box = wx.StaticBox(self, label='Quantity')
+        quantity_static_box = wx.StaticBox(type_static_box, label='Quantity')
         quantity_box = wx.StaticBoxSizer(quantity_static_box, wx.HORIZONTAL)
         type_box.Add(quantity_box)
 
-        self.type_quantity = wx.RadioButton(self)
+        self.type_quantity = wx.RadioButton(quantity_static_box)
         quantity_box.Add(self.type_quantity, flag=wx.CENTER)
 
-        self.units_input = wx.TextCtrl(self)
+        self.units_input = wx.TextCtrl(quantity_static_box)
         quantity_box.Add(self.units_input)
 
         # End buttons.
@@ -714,7 +715,91 @@ class VariablesPanel(wx.Panel):
         load_button.Bind(wx.EVT_BUTTON, self.OnLoad)
         export_box.Add(load_button)
 
+        # Constants.
+        self.get_const_button = wx.Button(self, label='Get constants')
+        self.get_const_button.SetToolTip(
+            'Read the current value of every output variable\'s resource and store it as '
+            'that variable\'s constant value (the "use const" setting is not changed).')
+        self.get_const_button.Bind(wx.EVT_BUTTON, self.OnGetConstants)
+        button_box.Add(self.get_const_button, flag=wx.LEFT, border=20)
+
         self.SetSizer(panel_box)
+
+    def _const_from_reading(self, var, reading):
+        """
+        Convert a value read from a resource into the number stored in var.const,
+        which is expressed in the variable's own units.
+        """
+
+        if isinstance(reading, Quantity):
+            if var.type == 'quantity' and var.units is not None:
+                number = reading.value / Quantity(1, var.units).value
+            else:
+                number = reading.original_value
+        else:
+            number = reading
+
+        if var.type == 'integer':
+            return int(round(number))
+
+        return float(number)
+
+    def OnGetConstants(self, evt=None):
+        variables = [var for var in self.olv.GetObjects()
+                     if 'const' not in var.edit_restrictions and var.resource_name]
+
+        missing = []
+        unreadable = []
+        readable_vars = []
+        for var in variables:
+            try:
+                resource = self.global_store.resources[var.resource_name]
+            except KeyError:
+                missing.append(var.resource_name)
+                continue
+
+            if not resource.readable:
+                unreadable.append(var.resource_name)
+            else:
+                readable_vars.append((var, resource))
+
+        problems = []
+        if missing:
+            problems.append('Missing resources: ' + ', '.join(missing))
+        if unreadable:
+            problems.append('Unreadable resources: ' + ', '.join(unreadable))
+
+        self.get_const_button.Disable()
+
+        def read_all():
+            results = []
+            errors = []
+            for var, resource in readable_vars:
+                try:
+                    results.append((var, self._const_from_reading(var, resource.value)))
+                except Exception as e:
+                    errors.append('{0}: {1}'.format(var.resource_name, e))
+
+            wx.CallAfter(finish, results, errors)
+
+        def finish(results, errors):
+            if not self:
+                return
+
+            # Only const is written; use_const and the sweep config stay as they are.
+            for var, value in results:
+                var.const = value
+
+            self.olv.RefreshObjects()
+            self.get_const_button.Enable()
+
+            messages = problems + errors
+            if messages:
+                MessageDialog(self, '\n'.join(messages), 'Get constants').Show()
+
+        thr = Thread(target=read_all)
+        thr.daemon = True
+        thr.start()
 
     def max_order(self):
         """

@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.WARNING)
 
 class SweepingAcquisitionFrame(wx.Frame):
     def __init__(self, parent, global_store, *args, **kwargs):
+        self.global_store = global_store
         wx.Frame.__init__(self, parent, *args, **kwargs)
 
         # Frame.
@@ -54,6 +55,13 @@ class SweepingAcquisitionFrame(wx.Frame):
 
             evt.Veto()
         else:
+            for dev in list(self.global_store.devices.values()):
+                try:
+                    if dev.device is not None:
+                        dev.device.close()
+                except Exception:
+                    pass
+
             evt.Skip()
 
 

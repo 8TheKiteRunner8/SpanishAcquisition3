@@ -1,19 +1,28 @@
 wait_sync 4
+move 100,R5
+ramp_idle:
+wait 20004
+loop R5,@ramp_idle
+wait 4
 frame_loop:
 move 0,R0
-move 4294966641,R1
-move 126,R3
-x_loop:
-move 4294966641,R2
-move 126,R4
-y_loop:
-set_awg_offs R1,R2
-upd_param 4
-wait 1000
+move 8,R3
+x_loop_a:
+move 8,R4
+y_loop_a:
+wait 1004
 acquire 0,R0,1000
 add R0,1,R0
-add R2,10,R2
-loop R4,@y_loop
-add R1,10,R1
-loop R3,@x_loop
+loop R4,@y_loop_a
+loop R3,@x_loop_a
+move 0,R0
+move 8,R3
+x_loop_b:
+move 8,R4
+y_loop_b:
+wait 1004
+acquire 1,R0,1000
+add R0,1,R0
+loop R4,@y_loop_b
+loop R3,@x_loop_b
 jmp @frame_loop

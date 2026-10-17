@@ -159,8 +159,11 @@ class Dialog(wx.Dialog):
 		"""
 
 		if self.auto_destroy and not evt.Show:
-			if not self.IsBeingDeleted():
-				self.Destroy()
+			try:
+				if not self.IsBeingDeleted():
+					self.Destroy()
+			except RuntimeError:
+				pass
 
 
 class MessageDialog(Dialog):

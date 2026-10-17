@@ -334,16 +334,16 @@ class DataCapturePanel(wx.Panel):
 
         # Directory.
         self.directory_browse_button = DirBrowseButton(
-            self, labelText='Directory:')
+            export_static_box, labelText='Directory:')
         export_path_box.Add(self.directory_browse_button, flag=wx.EXPAND)
 
         # Last file.
         last_file_box = wx.BoxSizer(wx.HORIZONTAL)
         export_path_box.Add(last_file_box, flag=wx.EXPAND)
 
-        last_file_box.Add(wx.StaticText(self, label='Last output: '),
+        last_file_box.Add(wx.StaticText(export_static_box, label='Last output: '),
                           flag=wx.ALIGN_CENTER_VERTICAL)  # |) wx.ALIGN_RIGHT)
-        self.last_file_name = wx.TextCtrl(self, style=wx.TE_READONLY)
+        self.last_file_name = wx.TextCtrl(export_static_box, style=wx.TE_READONLY)
         self.last_file_name.BackgroundColour = wx.LIGHT_GREY
         last_file_box.Add(self.last_file_name, proportion=1)
 

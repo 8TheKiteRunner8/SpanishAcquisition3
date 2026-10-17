@@ -42,77 +42,77 @@ class DeviceConfigPanel(wx.Panel):
 		panel_box.Add(address_box, flag=wx.EXPAND|wx.ALL, border=5)
 
 		### Ethernet.
-		ethernet_static_box = wx.StaticBox(self)
+		ethernet_static_box = wx.StaticBox(address_static_box)
 		ethernet_box = wx.StaticBoxSizer(ethernet_static_box, wx.VERTICAL)
 		address_sizer.Add(ethernet_box, proportion=1)
 
-		self.address_mode_eth = wx.RadioButton(self, label='Ethernet', style=wx.RB_GROUP)
+		self.address_mode_eth = wx.RadioButton(ethernet_static_box, label='Ethernet', style=wx.RB_GROUP)
 		ethernet_box.Add(self.address_mode_eth)
 
 		ethernet_sizer = wx.FlexGridSizer(rows=2, cols=2, vgap=5, hgap=5)
 		ethernet_box.Add(ethernet_sizer, flag=wx.EXPAND)
 
-		ethernet_sizer.Add(wx.StaticText(self, label='IP address:'),
+		ethernet_sizer.Add(wx.StaticText(ethernet_static_box, label='IP address:'),
 				flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT)
-		self.ip_address_input = IpAddrCtrl(self)
+		self.ip_address_input = IpAddrCtrl(ethernet_static_box)
 		ethernet_sizer.Add(self.ip_address_input, flag=wx.CENTER)
 
 		### Telnet
-		telnet_static_box = wx.StaticBox(self)
+		telnet_static_box = wx.StaticBox(address_static_box)
 		telnet_box = wx.StaticBoxSizer(telnet_static_box, wx.VERTICAL)
 		address_sizer.Add(telnet_box, proportion=1)
 
-		self.address_mode_tel = wx.RadioButton(self, label='Telnet')
+		self.address_mode_tel = wx.RadioButton(telnet_static_box, label='Telnet')
 		telnet_box.Add(self.address_mode_tel)
 
 		telnet_sizer = wx.FlexGridSizer(rows=2, cols=2, vgap=5, hgap=5)
 		telnet_box.Add(telnet_sizer, flag=wx.EXPAND)
 
-		telnet_sizer.Add(wx.StaticText(self, label='Host:'),
+		telnet_sizer.Add(wx.StaticText(telnet_static_box, label='Host:'),
 				flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT)
-		self.host_address_input = IpAddrCtrl(self)
+		self.host_address_input = IpAddrCtrl(telnet_static_box)
 		telnet_sizer.Add(self.host_address_input, flag=wx.CENTER)
 
 		### GPIB.
-		self.gpib_static_box = wx.StaticBox(self)
+		self.gpib_static_box = wx.StaticBox(address_static_box)
 		gpib_box = wx.StaticBoxSizer(self.gpib_static_box, wx.VERTICAL)
 		address_sizer.Add(gpib_box, proportion=1)
 
-		self.address_mode_gpib = wx.RadioButton(self, label='GPIB')
+		self.address_mode_gpib = wx.RadioButton(self.gpib_static_box, label='GPIB')
 		gpib_box.Add(self.address_mode_gpib)
 
 		gpib_sizer = wx.FlexGridSizer(rows=3, cols=2, vgap=5, hgap=5)
 		gpib_box.Add(gpib_sizer, flag=wx.EXPAND)
 
-		gpib_sizer.Add(wx.StaticText(self, label='Board:'),
+		gpib_sizer.Add(wx.StaticText(self.gpib_static_box, label='Board:'),
 				flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT)
-		self.gpib_board_input = wx.SpinCtrl(self, min=0, max=100, initial=0)
+		self.gpib_board_input = wx.SpinCtrl(self.gpib_static_box, min=0, max=100, initial=0)
 		gpib_sizer.Add(self.gpib_board_input, flag=wx.CENTER)
 
-		gpib_sizer.Add(wx.StaticText(self, label='PAD:'),
+		gpib_sizer.Add(wx.StaticText(self.gpib_static_box, label='PAD:'),
 				flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT)
-		self.gpib_pad_input = wx.SpinCtrl(self, min=1, max=30, initial=1)
+		self.gpib_pad_input = wx.SpinCtrl(self.gpib_static_box, min=1, max=30, initial=1)
 		gpib_sizer.Add(self.gpib_pad_input, flag=wx.CENTER)
 
-		gpib_sizer.Add(wx.StaticText(self, label='SAD:'),
+		gpib_sizer.Add(wx.StaticText(self.gpib_static_box, label='SAD:'),
 				flag=wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT)
-		self.gpib_sad_input = wx.SpinCtrl(self, min=0, max=30, initial=0)
+		self.gpib_sad_input = wx.SpinCtrl(self.gpib_static_box, min=0, max=30, initial=0)
 		gpib_sizer.Add(self.gpib_sad_input, flag=wx.CENTER)
 
 		### USB.
-		usb_static_box = wx.StaticBox(self)
+		usb_static_box = wx.StaticBox(address_static_box)
 		usb_box = wx.StaticBoxSizer(usb_static_box, wx.VERTICAL)
 		address_box.Add(usb_box, flag=wx.EXPAND)
 
-		self.address_mode_usb = wx.RadioButton(self, label='USB')
+		self.address_mode_usb = wx.RadioButton(usb_static_box, label='USB')
 		usb_box.Add(self.address_mode_usb)
 
 		usb_sizer = wx.BoxSizer(wx.HORIZONTAL)
 		usb_box.Add(usb_sizer, flag=wx.EXPAND)
 
-		usb_sizer.Add(wx.StaticText(self, label='USB resource: '),
+		usb_sizer.Add(wx.StaticText(usb_static_box, label='USB resource: '),
 				flag=wx.ALIGN_CENTER_VERTICAL)
-		self.usb_resource_input = wx.TextCtrl(self, size=(300, -1))
+		self.usb_resource_input = wx.TextCtrl(usb_static_box, size=(300, -1))
 		usb_sizer.Add(self.usb_resource_input, proportion=1)
 
 		## Implementation.
@@ -120,15 +120,15 @@ class DeviceConfigPanel(wx.Panel):
 		implementation_box = wx.StaticBoxSizer(implementation_static_box, wx.HORIZONTAL)
 		panel_box.Add(implementation_box, flag=wx.EXPAND|wx.ALL, border=5)
 
-		self.manufacturer_input = wx.Choice(self, choices=self.manufacturers)
+		self.manufacturer_input = wx.Choice(implementation_static_box, choices=self.manufacturers)
 		self.Bind(wx.EVT_CHOICE, self.OnManufacturer, self.manufacturer_input)
 		implementation_box.Add(self.manufacturer_input, proportion=1)
 
-		self.model_input = wx.Choice(self, choices=self.models)
+		self.model_input = wx.Choice(implementation_static_box, choices=self.models)
 		self.Bind(wx.EVT_CHOICE, self.OnModel, self.model_input)
 		implementation_box.Add(self.model_input, proportion=1)
 
-		self.mock_input = wx.CheckBox(self, label='Mock')
+		self.mock_input = wx.CheckBox(implementation_static_box, label='Mock')
 		implementation_box.Add(self.mock_input, flag=wx.CENTER)
 
 		## Connection buttons.
@@ -275,6 +275,14 @@ class DeviceConfigPanel(wx.Panel):
 				self.mock_input.Disable()
 			else:
 				self.mock_input.Enable()
+
+			# Some devices (e.g. the SPI rack) are never reached over Ethernet.
+			implementation = model.get('real') or model.get('mock')
+			preferred = getattr(implementation, 'preferred_address_mode', None)
+			if preferred == 'usb':
+				self.address_mode_usb.Value = True
+				if not self.usb_resource_input.Value:
+					self.usb_resource_input.SetHint('e.g. COM3')
 		else:
 			self.model = None
 

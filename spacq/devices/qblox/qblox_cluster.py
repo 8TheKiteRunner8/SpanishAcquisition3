@@ -219,6 +219,11 @@ class QbloxCluster(AbstractDevice):
         self.cluster.reset()
 
     def close(self):
+        # Reset first so no sequencer keeps driving the outputs after disconnecting.
+        try:
+            self.cluster.reset()
+        except Exception:
+            pass
         self.cluster.close()
 
 

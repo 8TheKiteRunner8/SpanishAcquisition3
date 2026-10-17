@@ -1,5 +1,6 @@
 import math
 import os
+import threading
 import time
 from typing import Optional
 
@@ -7,6 +8,9 @@ import numpy as np
 from qblox_instruments import Cluster, ClusterType
 from spacq.devices.qblox.qblox_cluster import QbloxCluster, QbloxModule, QbloxChannelResource
 import spacq.Libraries.QbloxSequenceHelpers.sequence_helperV3 as sh
+
+
+FRAME_ACQUISITIONS = ("frame_a", "frame_b")
 
 
 class QbloxVideoBackend:
@@ -19,6 +23,8 @@ class QbloxVideoBackend:
         Initialize the QbloxVideoBackend. 
         """
         self.device = device
+        # The cluster connection is a single socket, so reads, deletes and stop must not overlap.
+        self._io_lock = threading.RLock()
 
     def prepare_and_run(self, config: dict) -> dict:
         """
@@ -31,14 +37,14 @@ class QbloxVideoBackend:
         if mode == "direct":
             return self.prepare_and_run_direct(config)
         if mode == "set_readout":
-            return self.prepare_and_run_set_readout(config)
+            return self.prepare_and_run_rf_set_readout(config)
         raise ValueError(f"Unknown mode {mode!r}; expected 'direct' or 'set_readout'.")
 
     def prepare_and_run_direct(self, config: dict) -> dict:
         """Sweep X and Y and acquire the signal at acq_channel as it arrives."""
         return self._prepare_and_run(config)
 
-    def prepare_and_run_set_readout(self, config: dict) -> dict:
+    def prepare_and_run_rf_set_readout(self, config: dict) -> dict:
         """
         Sweep X and Y while the acquisition QRM plays a probe tone and demodulates the return.
 
@@ -162,12 +168,15 @@ class QbloxVideoBackend:
             sequencer.sequence(sequences["sweep"])
         sequencers['acq'].sequence(sequences["acquire"])
 
-        for module, seq_ind in seq_targets:
-            module.arm_sequencer(seq_ind)
+        with self._io_lock:
+            self._clear_frames(*seq_targets[-1])
 
-        # Start only our sequencers; wait_sync lines them up.
-        for module, seq_ind in seq_targets:
-            module.start_sequencer(seq_ind)
+            for module, seq_ind in seq_targets:
+                module.arm_sequencer(seq_ind)
+
+            # Start only our sequencers; wait_sync lines them up.
+            for module, seq_ind in seq_targets:
+                module.start_sequencer(seq_ind)
         
         return {
             "modules": modules,
@@ -191,16 +200,30 @@ class QbloxVideoBackend:
             elif name in ("offset_awg_path0", "offset_awg_path1"):
                 parameter(0)
 
+    @staticmethod
+    def _clear_frames(module, seq_ind):
+        """Delete both frame acquisitions so the next frame starts from empty bins."""
+        for name in FRAME_ACQUISITIONS:
+            module.delete_acquisition_data(seq_ind, name)
+
+    def reset_cluster(self):
+        with self._io_lock:
+            self.device.reset()
+
     def stop(self, run_results):
         seq_targets = run_results.get("seq_targets", [])
-        for module, seq_ind in seq_targets:
-            module.stop_sequencer(seq_ind)
-            # Keeps a probe tone from outliving the sweep.
-            sequencer = module.sequencers[seq_ind]
-            sequencer.offset_awg_path0(0)
-            sequencer.offset_awg_path1(0)
+        with self._io_lock:
+            for module, seq_ind in seq_targets:
+                module.stop_sequencer(seq_ind)
+                # Keeps a probe tone from outliving the sweep.
+                sequencer = module.sequencers[seq_ind]
+                sequencer.offset_awg_path0(0)
+                sequencer.offset_awg_path1(0)
 
-        return [module.get_sequencer_status(seq_ind) for module, seq_ind in seq_targets]
+            if seq_targets:
+                self._clear_frames(*seq_targets[-1])
+
+            return [module.get_sequencer_status(seq_ind) for module, seq_ind in seq_targets]
 
     def _create_sequences(
         self,
@@ -296,20 +319,28 @@ class QbloxVideoBackend:
             "jmp @frame_loop                        # video mode: sweep forever",
         ]
 
+        # Bins only accumulate, so frames alternate between two acquisitions. The host
+        # reads and clears the idle one while the sequencer fills the other.
+        def frame_lines(acq_index, suffix):
+            return [
+                "move 0,R0                          # acquisition-bin index for the first pixel",
+                f"move {x_num_steps},R3             # number of X rows to scan",
+                f"x_loop_{suffix}:                  # start one row of the 2D scan",
+                f"move {y_num_steps},R4             # number of pixels in this Y row",
+                f"y_loop_{suffix}:                  # start one pixel",
+                *wait_lines(4 + settle_time_ns, "match the sweep's output update and settling"),
+                f"acquire {acq_index},R0,{integration_time_ns}    # integrate this pixel into this frame's acquisition",
+                "add R0,1,R0                            # advance to the next pixel's acquisition bin",
+                f"loop R4,@y_loop_{suffix}              # repeat until this row has all Y points",
+                f"loop R3,@x_loop_{suffix}              # repeat until all X rows are scanned",
+            ]
+
         acquire_lines = [
             "wait_sync 4                        # synchronize this sequencer",
-            "frame_loop:                        # restart the sweep, overwriting this frame's bins",
-            "move 0,R0                          # acquisition-bin index for the first pixel",
-            f"move {x_num_steps},R3             # number of X rows to scan",
-            "x_loop:                            # start one row of the 2D scan",
-            f"move {y_num_steps},R4             # number of pixels in this Y row",
-            "y_loop:                            # start one pixel",
-            *wait_lines(4 + settle_time_ns, "match the sweep's output update and settling"),
-            f"acquire 0,R0,{integration_time_ns}    # integrate this pixel, overwriting the previous frame's bin",
-            "add R0,1,R0                            # advance to the next pixel's acquisition bin",
-            "loop R4,@y_loop                        # repeat until this row has all Y points",
-            "loop R3,@x_loop                        # repeat until all X rows are scanned",
-            "jmp @frame_loop                        # video mode: sweep forever, re-using the same bins",
+            "frame_loop:                        # restart the two-frame cycle",
+            *frame_lines(0, "a"),
+            *frame_lines(1, "b"),
+            "jmp @frame_loop                        # video mode: sweep forever",
         ]
 
         return {
@@ -323,10 +354,11 @@ class QbloxVideoBackend:
                 "waveforms": {},
                 "weights": {},
                 "acquisitions": {
-                    "frame": {
+                    name: {
                         "num_bins": x_num_steps * y_num_steps,
-                        "index": 0,
+                        "index": index,
                     }
+                    for index, name in enumerate(FRAME_ACQUISITIONS)
                 },
                 "program": "\n".join(acquire_lines),
             },
@@ -445,12 +477,16 @@ class QbloxVideoBackend:
         self,
         run_result: dict,
         voltage_window: dict,
-        acquisition_name: str = "frame",
         channel: str = "path0",
         poll_interval_s: Optional[float] = None,
+        stop_event: Optional[threading.Event] = None,
     ):
         """
-        Continuously poll and yield frames while the Q1ASM program loops forever.
+        Poll the two alternating frame acquisitions and yield each completed frame once.
+
+        Each buffer is deleted right after it is read, so frames replace each other instead
+        of accumulating. If the host polls slower than the sweep, a buffer holds the average
+        of the frames written since the last read; it is still cleared afterwards.
 
         Parameters:
         ----------
@@ -458,12 +494,13 @@ class QbloxVideoBackend:
             The result dictionary returned by ``prepare_and_run`` containing sequencer information.
         voltage_window : dict
             The sweep configuration containing x_window_mV, y_window_mV, x_num_steps, and y_num_steps.
-        acquisition_name : str, optional
-            The name of the acquisition to process (default is "frame").
         channel : str, optional
             The channel to extract ("path0", "path1", or "magnitude"; default is "path0").
         poll_interval_s : float, optional
-            The interval in seconds between polling the sequencer for new frames. If None, it is calculated based on the frame time.
+            Seconds between polls. If None, a quarter of the frame time, but at least 20 ms to
+            keep the instrument connection from being flooded.
+        stop_event : threading.Event, optional
+            Ends the stream between polls once set.
 
         Yields:
         ------
@@ -471,20 +508,79 @@ class QbloxVideoBackend:
             A dictionary containing the reshaped frame values, x and y axes in mV, and the channel name.
 
         """
-        acq_sequencer = run_result["sequencers"]["acq"]
+        acq_module, acq_seq_ind = run_result["seq_targets"][-1]
 
         if poll_interval_s is None:
             integration_time_ns = voltage_window.get("integration_time_ns", 1000)
             settle_time_ns = voltage_window.get("settle_time_ns", 1000)
             num_bins = voltage_window["x_num_steps"] * voltage_window["y_num_steps"]
             frame_time_s = num_bins * (integration_time_ns + settle_time_ns) * 1e-9
-            poll_interval_s = frame_time_s / 4
+            poll_interval_s = max(frame_time_s / 4, 0.02)
 
-        while True:
-            # TODO: verify get_acquisitions()/bin-overwrite behaviour against the real sequencer API.
-            acquisition_data = acq_sequencer.get_acquisitions()
-            yield self._construct_frame(voltage_window, acquisition_data, acquisition_name, channel)
+        # Deleting a buffer the sequencer keeps writing is unreliable, so nothing is deleted
+        # while streaming. Each frame is the difference between two reads of the running
+        # per-bin sums, divided by the number of new acquisitions of that bin.
+        baselines = {}
+
+        while stop_event is None or not stop_event.is_set():
+            frames = []
+            with self._io_lock:
+                if stop_event is not None and stop_event.is_set():
+                    break
+                acquisition_data = acq_module.get_acquisitions(acq_seq_ind)
+                for name in FRAME_ACQUISITIONS:
+                    counts = self._avg_counts(acquisition_data, name).astype(float)
+                    if counts.size == 0:
+                        continue
+                    try:
+                        bins = acquisition_data[name]["acquisition"]["bins"]["integration"]
+                        sums = {
+                            path: np.nan_to_num(
+                                np.asarray(bins[path], dtype=float).reshape(-1)
+                            ) * counts
+                            for path in ("path0", "path1")
+                        }
+                    except (KeyError, TypeError, ValueError):
+                        continue
+
+                    prev_counts, prev_sums = baselines.get(
+                        name, (np.zeros_like(counts), {p: np.zeros_like(counts) for p in sums})
+                    )
+                    if prev_counts.shape != counts.shape or (counts < prev_counts).any():
+                        prev_counts = np.zeros_like(counts)
+                        prev_sums = {p: np.zeros_like(counts) for p in sums}
+
+                    new_counts = counts - prev_counts
+                    # Some pixels have not been re-measured yet: wait for the next poll.
+                    if new_counts.min() <= 0:
+                        baselines[name] = (prev_counts, prev_sums)
+                        continue
+
+                    frame_data = {
+                        name: {
+                            "acquisition": {
+                                "bins": {
+                                    "integration": {
+                                        p: (sums[p] - prev_sums[p]) / new_counts for p in sums
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    frames.append(self._construct_frame(voltage_window, frame_data, name, channel))
+                    baselines[name] = (counts, sums)
+
+            yield from frames
             time.sleep(poll_interval_s)
+
+    @staticmethod
+    def _avg_counts(acquisition_data: dict, name: str) -> np.ndarray:
+        """Return how many times each bin of one acquisition has been written."""
+        try:
+            counts = acquisition_data[name]["acquisition"]["bins"]["avg_cnt"]
+        except (KeyError, TypeError):
+            return np.array([])
+        return np.asarray(counts).reshape(-1)
 
 #%% --- TESTS --- ###
 DUMMY_CLUSTER_CONFIG = {

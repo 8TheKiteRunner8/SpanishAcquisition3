@@ -108,7 +108,9 @@ class VideoModeRunner:
                 "Video-mode streaming requires the 'sequencer options' configuration mode."
             )
 
-        for frame in self.backend.stream_frames(self.run_result, voltage_window):
+        for frame in self.backend.stream_frames(
+            self.run_result, voltage_window, stop_event=self._stop_event
+        ):
             if self._stop_event.is_set():
                 break
             yield frame
@@ -117,6 +119,10 @@ class VideoModeRunner:
         self._stop_event.set()
         if self.run_result is not None:
             self.backend.stop(self.run_result)
+
+    def reset_cluster(self):
+        # Returns the whole cluster to its power-on state; stop() must have finished first.
+        self.backend.reset_cluster()
 
     def _select_execution_mode(self):
         """

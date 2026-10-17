@@ -2614,7 +2614,13 @@ class FastObjectListView(AbstractVirtualObjectListView):
         Refresh all the objects in the given list
         """
         self.lastGetObjectIndex = -1
-        # If no list is given, refresh everything
+        try:
+            self._RefreshObjects(aList)
+        except RuntimeError:
+            # Queued refresh arrived after the list was destroyed (e.g. on app close).
+            pass
+
+    def _RefreshObjects(self, aList=None):
         if aList:
             for x in aList:
                 idx = self.GetIndexOf(x)

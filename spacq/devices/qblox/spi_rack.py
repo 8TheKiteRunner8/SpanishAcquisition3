@@ -78,8 +78,11 @@ class D5aDAC(AbstractSubdevice):
 		
 class SPIRack(AbstractDevice):
 	"""
-	Interface for the QBLOX SPI rack
+	Interface for the QBLOX SPI rack. It is reached over USB: enter its serial port
+	(e.g. COM3) as the USB resource.
 	"""
+
+	preferred_address_mode = 'usb'
 	
 	def _setup(self):
 		AbstractDevice._setup(self)
