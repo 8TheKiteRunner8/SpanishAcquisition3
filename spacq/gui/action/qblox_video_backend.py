@@ -9,8 +9,13 @@ from qblox_instruments import Cluster, ClusterType
 from spacq.devices.qblox.qblox_cluster import QbloxCluster, QbloxModule, QbloxChannelResource
 import spacq.Libraries.QbloxSequenceHelpers.sequence_helperV3 as sh
 
+#TODO: Implement proper error handling and cleanup for the video-mode backend.
+#TODO: Implement support for virtualized gates. Create another sequence handling the other gates that synchronizes with the main sequence. 
+#TODO: Handle acquisition time properly to allow for acquisition times longer than 16384 ns by looping
 
-FRAME_ACQUISITIONS = ("frame_a", "frame_b")
+#Two frames, to store alternating acquisitions, as there is no way in Q1ASM to clear acquisitions bins once loop is started. 
+#This allows for continuous acquisition.
+FRAME_ACQUISITIONS = ("frame_a", "frame_b") 
 
 
 class QbloxVideoBackend:
