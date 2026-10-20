@@ -2,6 +2,8 @@
 	Device driver for the Qblox Cluster.
 
 	Author: Kite Sauër 
+
+    TODO: remove hard couded module channels. 
 """
 import logging
 log = logging.getLogger(__name__)

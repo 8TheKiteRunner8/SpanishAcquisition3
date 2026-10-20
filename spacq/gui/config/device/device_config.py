@@ -37,17 +37,27 @@ class DeviceConfigPanel(wx.Panel):
 		## Address.
 		address_static_box = wx.StaticBox(self, label='Address')
 		address_box = wx.StaticBoxSizer(address_static_box, wx.VERTICAL)
+		self.address_mode = wx.RadioBox(address_static_box,
+												label="Connection Type",
+												choices=["Ethernet", "Telnet", "GPIB", "USB"],
+												majorDimension=4,
+												style=wx.RA_SPECIFY_COLS,
+											   )
+		
+		address_box.Add(self.address_mode, flag=wx.EXPAND|wx.ALL, border=5)
 		address_sizer = wx.BoxSizer(wx.HORIZONTAL)
 		address_box.Add(address_sizer, flag=wx.EXPAND)
 		panel_box.Add(address_box, flag=wx.EXPAND|wx.ALL, border=5)
+
+		
 
 		### Ethernet.
 		ethernet_static_box = wx.StaticBox(address_static_box)
 		ethernet_box = wx.StaticBoxSizer(ethernet_static_box, wx.VERTICAL)
 		address_sizer.Add(ethernet_box, proportion=1)
 
-		self.address_mode_eth = wx.RadioButton(ethernet_static_box, label='Ethernet', style=wx.RB_GROUP)
-		ethernet_box.Add(self.address_mode_eth)
+		# self.address_mode_eth = wx.RadioButton(ethernet_static_box, label='Ethernet', style=wx.RB_GROUP)
+		# ethernet_box.Add(self.address_mode_eth)
 
 		ethernet_sizer = wx.FlexGridSizer(rows=2, cols=2, vgap=5, hgap=5)
 		ethernet_box.Add(ethernet_sizer, flag=wx.EXPAND)
@@ -62,8 +72,8 @@ class DeviceConfigPanel(wx.Panel):
 		telnet_box = wx.StaticBoxSizer(telnet_static_box, wx.VERTICAL)
 		address_sizer.Add(telnet_box, proportion=1)
 
-		self.address_mode_tel = wx.RadioButton(telnet_static_box, label='Telnet')
-		telnet_box.Add(self.address_mode_tel)
+		# self.address_mode_tel = wx.RadioButton(telnet_static_box, label='Telnet')
+		# telnet_box.Add(self.address_mode_tel)
 
 		telnet_sizer = wx.FlexGridSizer(rows=2, cols=2, vgap=5, hgap=5)
 		telnet_box.Add(telnet_sizer, flag=wx.EXPAND)
@@ -78,8 +88,8 @@ class DeviceConfigPanel(wx.Panel):
 		gpib_box = wx.StaticBoxSizer(self.gpib_static_box, wx.VERTICAL)
 		address_sizer.Add(gpib_box, proportion=1)
 
-		self.address_mode_gpib = wx.RadioButton(self.gpib_static_box, label='GPIB')
-		gpib_box.Add(self.address_mode_gpib)
+		# self.address_mode_gpib = wx.RadioButton(self.gpib_static_box, label='GPIB')
+		# gpib_box.Add(self.address_mode_gpib)
 
 		gpib_sizer = wx.FlexGridSizer(rows=3, cols=2, vgap=5, hgap=5)
 		gpib_box.Add(gpib_sizer, flag=wx.EXPAND)
@@ -104,8 +114,8 @@ class DeviceConfigPanel(wx.Panel):
 		usb_box = wx.StaticBoxSizer(usb_static_box, wx.VERTICAL)
 		address_box.Add(usb_box, flag=wx.EXPAND)
 
-		self.address_mode_usb = wx.RadioButton(usb_static_box, label='USB')
-		usb_box.Add(self.address_mode_usb)
+		# self.address_mode_usb = wx.RadioButton(usb_static_box, label='USB')
+		# usb_box.Add(self.address_mode_usb)
 
 		usb_sizer = wx.BoxSizer(wx.HORIZONTAL)
 		usb_box.Add(usb_sizer, flag=wx.EXPAND)
@@ -145,15 +155,28 @@ class DeviceConfigPanel(wx.Panel):
 
 		self.SetSizerAndFit(panel_box)
 
+	# def get_address_mode(self):
+	# 	if self.address_mode_eth.Value:
+	# 		return DeviceConfig.address_modes.ethernet
+	# 	elif self.address_mode_tel.Value:
+	# 		return DeviceConfig.address_modes.telnet
+	# 	elif self.address_mode_gpib.Value:
+	# 		return DeviceConfig.address_modes.gpib
+	# 	elif self.address_mode_usb.Value:
+	# 		return DeviceConfig.address_modes.usb
+
 	def get_address_mode(self):
-		if self.address_mode_eth.Value:
+		selection = self.address_mode.GetStringSelection()
+
+		if selection == "Ethernet":
 			return DeviceConfig.address_modes.ethernet
-		elif self.address_mode_tel.Value:
+		elif selection == "Telnet":
 			return DeviceConfig.address_modes.telnet
-		elif self.address_mode_gpib.Value:
+		elif selection == "GPIB":
 			return DeviceConfig.address_modes.gpib
-		elif self.address_mode_usb.Value:
+		elif selection == "USB":
 			return DeviceConfig.address_modes.usb
+
 
 	def GetValue(self):
 		dev_cfg = DeviceConfig(name=self.name)
@@ -201,11 +224,16 @@ class DeviceConfigPanel(wx.Panel):
 
 		# Address mode.
 		if dev_cfg.address_mode == DeviceConfig.address_modes.ethernet:
-			self.address_mode_eth.Value = True
+			self.address_mode.SetStringSelection("Ethernet")
+
+		elif dev_cfg.address_mode == DeviceConfig.address_modes.telnet:
+			self.address_mode.SetStringSelection("Telnet")
+
 		elif dev_cfg.address_mode == DeviceConfig.address_modes.gpib:
-			self.address_mode_gpib.Value = True
+			self.address_mode.SetStringSelection("GPIB")
+
 		elif dev_cfg.address_mode == DeviceConfig.address_modes.usb:
-			self.address_mode_usb.Value = True
+			self.address_mode.SetStringSelection("USB")
 
 		## Ethernet.
 		if dev_cfg.ip_address:
@@ -280,7 +308,7 @@ class DeviceConfigPanel(wx.Panel):
 			implementation = model.get('real') or model.get('mock')
 			preferred = getattr(implementation, 'preferred_address_mode', None)
 			if preferred == 'usb':
-				self.address_mode_usb.Value = True
+				self.address_mode.SetStringSelection("USB")
 				if not self.usb_resource_input.Value:
 					self.usb_resource_input.SetHint('e.g. COM3')
 		else:
